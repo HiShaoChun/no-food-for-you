@@ -22,7 +22,13 @@ The five types are:
 
 #### Scenario: round_settled fields
 - **WHEN** round N's settlement completes
-- **THEN** a `round_settled` event SHALL include `round: N`, `energies` (post-settlement map of all agent IDs to integer energies including eliminated ones at 0), and `eliminated` (list of agent IDs newly eliminated this round)
+- **THEN** a `round_settled` event SHALL include:
+  - `round: N`
+  - `prev_energies` — map of all agent IDs to integer energies at round start (before transfers and pressure)
+  - `energies` — post-settlement map of all agent IDs to integer energies; eliminated agents at 0
+  - `transfers` — array of `{ from, to, amount }` reflecting actual policy-truncated transfers
+  - `pressure_cost` — the integer maintenance fee deducted from each living agent
+  - `eliminated` — list of agent IDs newly eliminated this round
 
 #### Scenario: sim_ended fields
 - **WHEN** the simulation terminates

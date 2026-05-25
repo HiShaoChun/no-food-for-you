@@ -10,6 +10,8 @@ type Entry = {
   ended: boolean;
   endedAt: number | null;
   filePath: string;
+  // Serialized write chain — guarantees JSONL append order matches emit order
+  writeChain: Promise<void>;
 };
 
 const RUNS_DIR = path.resolve(process.cwd(), "runs");
@@ -42,7 +44,18 @@ export async function createSim(sim_id: string): Promise<void> {
     ended: false,
     endedAt: null,
     filePath,
+    writeChain: Promise.resolve(),
   });
+}
+
+/**
+ * Wait until all queued writes for a sim_id have flushed to disk.
+ * Useful for tests and for SSE handlers that need to confirm a final event was persisted.
+ */
+export async function flushWrites(sim_id: string): Promise<void> {
+  const entry = registry.get(sim_id);
+  if (!entry) return;
+  await entry.writeChain;
 }
 
 export async function emitEvent(sim_id: string, event: SimEvent): Promise<void> {
@@ -50,10 +63,18 @@ export async function emitEvent(sim_id: string, event: SimEvent): Promise<void> 
   if (!entry) {
     throw new Error(`sim_id "${sim_id}" not registered`);
   }
+  // Order is fixed at push-time: buffer order = emit order
   entry.buffer.push(event);
-  // Append to JSONL (one line per event)
-  await fs.appendFile(entry.filePath, JSON.stringify(event) + "\n", { encoding: "utf8" });
-  // Fan out to live subscribers
+
+  // Chain the file append so writes are serialized in emit order, even when callers fire-and-forget.
+  const writePromise = entry.writeChain.then(() =>
+    fs.appendFile(entry.filePath, JSON.stringify(event) + "\n", { encoding: "utf8" }),
+  );
+  entry.writeChain = writePromise.catch(() => {
+    // Don't break the chain on a single failed write
+  });
+
+  // Fan out to live subscribers synchronously (preserves order)
   for (const sub of entry.subscribers) {
     try {
       sub(event);
@@ -61,11 +82,15 @@ export async function emitEvent(sim_id: string, event: SimEvent): Promise<void> 
       // ignore subscriber errors; they should not bring down the engine
     }
   }
+
   if (event.type === "sim_ended") {
     entry.ended = true;
     entry.endedAt = Date.now();
     scheduleCleanup(sim_id);
   }
+
+  // Caller can `await` this if it cares about durability
+  await writePromise;
 }
 
 export function subscribe(sim_id: string, sub: Subscriber): {

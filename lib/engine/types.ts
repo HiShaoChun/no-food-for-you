@@ -122,7 +122,10 @@ export type SimEvent =
       type: "round_settled";
       sim_id: string;
       round: number;
-      energies: Record<string, number>;
+      prev_energies: Record<string, number>; // round-start snapshot
+      energies: Record<string, number>; // post-settlement
+      transfers: Array<{ from: string; to: string; amount: number }>; // policy-applied
+      pressure_cost: number; // maintenance fee deducted from each living agent
       eliminated: string[]; // newly eliminated this round
       t: string;
     }

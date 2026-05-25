@@ -57,3 +57,4 @@ pnpm test        # vitest run
 ## Decision Log
 - **2026-05-25** `add-mvp-arena` 提案立项：Next.js 单仓 / Ark 单 key / 5 capability 划分
 - **2026-05-25** `add-mvp-arena` 实现完成并归档：53 单测全过、typecheck 严格、lint 零警告、production build 成功。5 个 capability spec 合入 `openspec/specs/`。
+- **2026-05-26** `enhance-arena-feedback` 实现完成并归档：扩展 round_settled 事件（prev_energies / transfers / pressure_cost），新增 3 个 UI 组件（RoundSettleCard / TombstoneCard / FinalStandings），62 单测全过。registry 增加 per-sim write serialization 修复 JSONL 写入顺序问题。

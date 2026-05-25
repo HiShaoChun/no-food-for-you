@@ -1,7 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { AgentInstance, SimEvent } from "@/lib/engine/types";
+import { RoundSettleCard } from "./RoundSettleCard";
+import { TombstoneCard } from "./TombstoneCard";
+import { FinalStandings } from "./FinalStandings";
+import { computeStats } from "@/lib/stats/aggregate";
 
 type Props = {
   agents: AgentInstance[];
@@ -21,6 +25,13 @@ function Avatar({ color }: { color: string }): React.ReactElement {
 export function ChatBubbles({ agents, events }: Props): React.ReactElement {
   const ref = useRef<HTMLDivElement>(null);
   const nameOf = (id: string): string => agents.find((a) => a.id === id)?.display_name ?? id;
+
+  // Precompute per-agent stats so the tombstones can show "given X / survived N rounds"
+  const stats = useMemo(() => computeStats(agents, events), [agents, events]);
+  const statsById = useMemo(
+    () => new Map(stats.per_agent.map((s) => [s.id, s])),
+    [stats.per_agent],
+  );
 
   useEffect(() => {
     const el = ref.current;
@@ -114,25 +125,37 @@ export function ChatBubbles({ agents, events }: Props): React.ReactElement {
       return;
     }
     if (e.type === "round_settled") {
-      const elim = e.eliminated;
-      if (elim.length > 0) {
+      // ① Tombstones for any newly-eliminated agents (rendered before the settle card)
+      for (const id of e.eliminated) {
+        const s = statsById.get(id);
         blocks.push(
-          <div key={`s-${idx}`} className="settle-event">
-            <span className="icon">⚰</span>
-            <span className="elim">淘汰</span>
-            <span>{elim.map(nameOf).join("、")}</span>
-          </div>,
+          <TombstoneCard
+            key={`tomb-${e.round}-${id}-${idx}`}
+            agents={agents}
+            agent_id={id}
+            round={e.round}
+            alive_rounds={s?.alive_rounds ?? e.round}
+            given={s?.given}
+          />,
         );
       }
+      // ② Round settlement card
+      blocks.push(
+        <RoundSettleCard
+          key={`settle-${e.round}-${idx}`}
+          event={e}
+          agents={agents}
+        />,
+      );
       return;
     }
     if (e.type === "sim_ended") {
       blocks.push(
-        <div key={`end-${idx}`} className="round-divider end">
-          <span className="label">
-            游戏结束 · {e.reason} · 幸存者 {e.survivors.map(nameOf).join("、") || "无"}
-          </span>
-        </div>,
+        <FinalStandings
+          key={`final-${idx}`}
+          agents={agents}
+          events={events}
+        />,
       );
       return;
     }

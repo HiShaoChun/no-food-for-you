@@ -12,6 +12,9 @@ export type RoundOutput = {
   decision_events: Omit<SimEvent & { type: "agent_decision" }, "type" | "sim_id" | "t">[];
   newly_eliminated: string[];
   next_state: GameState;
+  prev_energies: Record<string, number>;
+  transfers: Array<{ from: string; to: string; amount: number }>;
+  pressure_cost: number;
 };
 
 export function initState(config: GameConfig): GameState {
@@ -69,6 +72,9 @@ export async function runRound(
     decision_events,
     newly_eliminated: settled.newly_eliminated,
     next_state: settled.next_state,
+    prev_energies: settled.prev_energies,
+    transfers: settled.transfers,
+    pressure_cost: settled.pressure_cost,
   };
 }
 
@@ -116,7 +122,8 @@ export async function runSimulation(
 
     opts.emit({ type: "round_started", sim_id: opts.sim_id, round: state.round, t: now() });
 
-    const { decision_events, next_state } = await runRound(state, opts.agents);
+    const { decision_events, next_state, prev_energies, transfers, pressure_cost } =
+      await runRound(state, opts.agents);
 
     for (const ev of decision_events) {
       opts.emit({
@@ -131,7 +138,10 @@ export async function runSimulation(
       type: "round_settled",
       sim_id: opts.sim_id,
       round: state.round,
+      prev_energies,
       energies: { ...next_state.energies },
+      transfers,
+      pressure_cost,
       eliminated: [...next_state.eliminated].filter((a) => !state.eliminated.has(a)),
       t: now(),
     });

@@ -22,6 +22,9 @@ export type SettleResult = {
   newly_eliminated: string[];
   // Public history events recorded this round (already appended to next_state.history)
   events_this_round: HistoryEvent[];
+  prev_energies: Record<string, number>;
+  transfers: Array<{ from: string; to: string; amount: number }>;
+  pressure_cost: number;
 };
 
 /**
@@ -36,8 +39,12 @@ export function settleRound(state: GameState, decisions: DecidedAction[]): Settl
     Object.keys(state.energies).filter((a) => !state.eliminated.has(a)),
   );
 
+  // Snapshot of energies at round-start (for prev_energies in settled event)
+  const prev_energies: Record<string, number> = { ...state.energies };
   // Working copy of energies (we mutate as transfers apply)
   const energies: Record<string, number> = { ...state.energies };
+  // Collect actual transfers (policy-truncated amounts)
+  const transfers: Array<{ from: string; to: string; amount: number }> = [];
 
   // Inboxes for NEXT round (current round's requests delivered next round)
   const nextInboxes: Record<string, InboxMessage[]> = {};
@@ -79,6 +86,7 @@ export function settleRound(state: GameState, decisions: DecidedAction[]): Settl
       energies[agent_id] = senderE - give;
       energies[a.to] = (energies[a.to] ?? 0) + give;
       eventsThisRound.push({ kind: "transfer", from: agent_id, to: a.to, amount: give });
+      transfers.push({ from: agent_id, to: a.to, amount: give });
     }
   }
 
@@ -102,9 +110,9 @@ export function settleRound(state: GameState, decisions: DecidedAction[]): Settl
   }
 
   // ───── Step C: pressure deduction ─────
-  const cost = pressureCost(state.config.pressure, state.round);
+  const pressure_cost = pressureCost(state.config.pressure, state.round);
   for (const id of livingBefore) {
-    energies[id] = (energies[id] ?? 0) - cost;
+    energies[id] = (energies[id] ?? 0) - pressure_cost;
   }
 
   // ───── Step D: elimination (energy <= 0 after settlement) ─────
@@ -136,7 +144,14 @@ export function settleRound(state: GameState, decisions: DecidedAction[]): Settl
     rng: state.rng,
   };
 
-  return { next_state, newly_eliminated, events_this_round: eventsThisRound };
+  return {
+    next_state,
+    newly_eliminated,
+    events_this_round: eventsThisRound,
+    prev_energies,
+    transfers,
+    pressure_cost,
+  };
 }
 
 /**

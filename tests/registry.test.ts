@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "fs";
 import path from "path";
-import { createSim, emitEvent, subscribe, isRegistered } from "@/lib/registry";
+import { createSim, emitEvent, subscribe, isRegistered, flushWrites } from "@/lib/registry";
 import type { SimEvent } from "@/lib/engine/types";
 import { runSimulation } from "@/lib/engine/round";
 import { makeStubAgent } from "@/lib/agents/stub-agent";
@@ -113,8 +113,8 @@ describe("integration — full sim writes valid JSONL", () => {
       },
     });
 
-    // Small delay to let appendFile flush
-    await new Promise((r) => setTimeout(r, 50));
+    // Flush serialized write queue
+    await flushWrites(sim_id);
 
     const content = await fs.readFile(path.join(RUNS_DIR, `${sim_id}.jsonl`), "utf8");
     const lines = content.trim().split("\n");

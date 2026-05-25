@@ -112,6 +112,92 @@ describe("runSimulation — terminates", () => {
   });
 });
 
+describe("runSimulation — round_settled new fields", () => {
+  it("settled event includes prev_energies, transfers, pressure_cost", async () => {
+    const events: SimEvent[] = [];
+    await runSimulation(
+      cfg({
+        initial_energy: 10,
+        max_rounds: 3,
+        pressure: { type: "constant", amount: 1 },
+      }),
+      {
+        sim_id: "x",
+        agents: [
+          makeStubAgent("A1", { type: "respond_first_inbox", amount: 2 }),
+          makeStubAgent("A2", { type: "request_poorest", amount: 1 }),
+          makeStubAgent("A3", { type: "always_noop" }),
+        ],
+        emit: (e) => events.push(e),
+      },
+    );
+    const settled = events.filter((e) => e.type === "round_settled");
+    expect(settled.length).toBeGreaterThanOrEqual(2);
+    for (const s of settled) {
+      if (s.type !== "round_settled") continue;
+      // prev_energies and energies are present and cover all agents
+      expect(Object.keys(s.prev_energies).sort()).toEqual(["A1", "A2", "A3"]);
+      expect(Object.keys(s.energies).sort()).toEqual(["A1", "A2", "A3"]);
+      // pressure_cost equals the constant
+      expect(s.pressure_cost).toBe(1);
+      // transfers is always an array
+      expect(Array.isArray(s.transfers)).toBe(true);
+    }
+  });
+
+  it("transfers reflect actual policy-applied amounts under capped policy", async () => {
+    const events: SimEvent[] = [];
+    await runSimulation(
+      cfg({
+        initial_energy: 20,
+        max_rounds: 3,
+        allocation_policy: { type: "capped", cap: 2 },
+      }),
+      {
+        sim_id: "x",
+        agents: [
+          makeStubAgent("A1", { type: "respond_first_inbox", amount: 10 }),
+          makeStubAgent("A2", { type: "request_poorest", amount: 1 }),
+          makeStubAgent("A3", { type: "request_poorest", amount: 1 }),
+        ],
+        emit: (e) => events.push(e),
+      },
+    );
+    const settled = events.filter((e) => e.type === "round_settled");
+    // From round 2 onward, A1 should respond with amount 10 → capped to 2
+    const r2 = settled[1];
+    if (r2 && r2.type === "round_settled") {
+      for (const t of r2.transfers) {
+        // Capped to 2, not the agent-declared 10
+        expect(t.amount).toBeLessThanOrEqual(2);
+      }
+    }
+  });
+
+  it("prev_energies equals previous round's energies", async () => {
+    const events: SimEvent[] = [];
+    await runSimulation(cfg({ initial_energy: 10, max_rounds: 4 }), {
+      sim_id: "x",
+      agents: [
+        makeStubAgent("A1", { type: "always_noop" }),
+        makeStubAgent("A2", { type: "always_noop" }),
+        makeStubAgent("A3", { type: "always_noop" }),
+      ],
+      emit: (e) => events.push(e),
+    });
+    const settled = events.filter((e) => e.type === "round_settled");
+    // Round 1: prev = initial = 10
+    if (settled[0]?.type === "round_settled") {
+      expect(settled[0].prev_energies).toEqual({ A1: 10, A2: 10, A3: 10 });
+      expect(settled[0].energies).toEqual({ A1: 9, A2: 9, A3: 9 });
+    }
+    // Round 2: prev = round 1 energies
+    if (settled[1]?.type === "round_settled" && settled[0]?.type === "round_settled") {
+      expect(settled[1].prev_energies).toEqual(settled[0].energies);
+    }
+  });
+});
+
 describe("runSimulation — capped allocation policy", () => {
   it("scales allocations down when responder over-allocates", async () => {
     // A1 will respond to inbox (after first round), trying to give a lot
