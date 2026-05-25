@@ -13,7 +13,6 @@ type Props = {
 let nextIdCounter = 0;
 
 function nextId(existing: AgentInstance[]): string {
-  // Find the largest used numeric suffix, return that + 1
   let max = 0;
   for (const a of existing) {
     const m = /^A(\d+)$/.exec(a.id);
@@ -36,6 +35,11 @@ function firstEnabledModel(availability: Availability | null): ModelKey {
     if (availability[provider]) return k;
   }
   return MODEL_KEYS[0]!;
+}
+
+function agentColor(idx: number): string {
+  // matches --A1 .. --A10 in globals.css, cycles past 10
+  return `var(--A${(idx % 10) + 1})`;
 }
 
 export function AgentPicker({ agents, availability, onChange }: Props): React.ReactElement {
@@ -62,12 +66,20 @@ export function AgentPicker({ agents, availability, onChange }: Props): React.Re
 
   return (
     <div className="section">
-      <h3>Agents ({agents.length}/10)</h3>
-      {agents.map((a) => {
+      <h3>
+        Agents <span style={{ color: "var(--text-faint)", fontWeight: 500 }}>({agents.length}/10)</span>
+      </h3>
+      {agents.map((a, idx) => {
         const { provider } = getModel(a.model_key);
         const providerOk = availability ? availability[provider] : true;
         return (
           <div key={a.id} className="agent-row">
+            <span
+              className="agent-swatch"
+              style={{ background: agentColor(idx) }}
+              title={`${a.id} — chart color`}
+              aria-hidden
+            />
             <input
               type="text"
               value={a.display_name}
@@ -78,7 +90,7 @@ export function AgentPicker({ agents, availability, onChange }: Props): React.Re
             <select
               value={a.model_key}
               onChange={(e) => updateAgent(a.id, { model_key: e.target.value as ModelKey })}
-              style={{ borderColor: providerOk ? "" : "var(--red)" }}
+              style={{ borderColor: providerOk ? "" : "var(--danger)" }}
               title={providerOk ? "" : `provider ${provider} 未配置`}
             >
               {MODEL_KEYS.map((m) => {
@@ -96,6 +108,7 @@ export function AgentPicker({ agents, availability, onChange }: Props): React.Re
               onClick={() => removeAgent(a.id)}
               disabled={!canRemove}
               title={canRemove ? "删除" : "至少需要 2 个 agent"}
+              aria-label={`Remove ${a.display_name}`}
             >
               ×
             </button>
@@ -106,7 +119,7 @@ export function AgentPicker({ agents, availability, onChange }: Props): React.Re
         className="btn-ghost"
         onClick={addAgent}
         disabled={!canAdd}
-        style={{ width: "100%", marginTop: 6 }}
+        style={{ width: "100%", marginTop: 8 }}
       >
         + 添加 Agent
       </button>

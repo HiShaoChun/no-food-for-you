@@ -41,6 +41,10 @@ export function ConfigPanel({ config, availability, running, onChange, onStart }
           onChange={(e) => patch("shared_system_prompt", e.target.value)}
           placeholder={DEFAULT_SHARED_SYSTEM_PROMPT}
         />
+        <PromptMeta
+          value={config.shared_system_prompt}
+          onReset={() => patch("shared_system_prompt", DEFAULT_SHARED_SYSTEM_PROMPT)}
+        />
       </div>
 
       <div className="section">
@@ -123,9 +127,42 @@ export function ConfigPanel({ config, availability, running, onChange, onStart }
         onClick={onStart}
         title={validation.ok ? "" : validation.reason}
       >
-        {running ? "Running..." : validation.ok ? "▶ Start" : `✕ ${validation.reason}`}
+        {running ? "Running…" : validation.ok ? "▶  Start Simulation" : `✕  ${validation.reason}`}
       </button>
     </aside>
+  );
+}
+
+function PromptMeta({
+  value,
+  onReset,
+}: {
+  value: string;
+  onReset: () => void;
+}): React.ReactElement {
+  const trimmed = value.trim();
+  const isEmpty = trimmed.length === 0;
+  const isDefault = trimmed === DEFAULT_SHARED_SYSTEM_PROMPT.trim();
+  const tagClass = isEmpty ? "empty" : isDefault ? "default" : "modified";
+  const tagText = isEmpty ? "空" : isDefault ? "默认" : "已修改";
+  return (
+    <div className="prompt-meta">
+      <span className={`tag ${tagClass}`} title={isDefault ? "未改动" : "改动会在 Start 时生效"}>
+        <span className="dot" aria-hidden />
+        {tagText}
+      </span>
+      <span className="char-count">{value.length} 字</span>
+      {!isDefault && (
+        <button
+          type="button"
+          className="btn-link"
+          onClick={onReset}
+          title="把内容还原为内置默认 prompt"
+        >
+          恢复默认
+        </button>
+      )}
+    </div>
   );
 }
 

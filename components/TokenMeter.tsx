@@ -2,6 +2,10 @@
 
 import type { SimEvent } from "@/lib/engine/types";
 
+function fmt(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
 export function TokenMeter({ events }: { events: SimEvent[] }): React.ReactElement {
   let input = 0;
   let output = 0;
@@ -14,10 +18,24 @@ export function TokenMeter({ events }: { events: SimEvent[] }): React.ReactEleme
   return (
     <div className="footer">
       <div className="token-meter">
-        Token 累计：input <span>{input}</span> · output <span>{output}</span> · total{" "}
-        <span>{input + output}</span>
+        <span className="group">
+          <span className="label">in</span>
+          <span className="value">{fmt(input)}</span>
+        </span>
+        <span className="sep">·</span>
+        <span className="group">
+          <span className="label">out</span>
+          <span className="value">{fmt(output)}</span>
+        </span>
+        <span className="sep">·</span>
+        <span className="group">
+          <span className="label">total</span>
+          <span className="value">{fmt(input + output)}</span>
+        </span>
       </div>
-      <div>{events.length} events</div>
+      <div className="events-count">
+        <span>{events.length}</span> events
+      </div>
     </div>
   );
 }

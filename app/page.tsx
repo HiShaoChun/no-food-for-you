@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { ProviderStatus } from "@/components/ProviderStatus";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ProviderStatus, type SimStatus } from "@/components/ProviderStatus";
 import { ConfigPanel } from "@/components/ConfigPanel";
 import { Arena } from "@/components/Arena";
 import type { Availability } from "@/lib/llm/availability";
@@ -120,10 +120,19 @@ export default function Page(): React.ReactElement {
     };
   }, [simId]);
 
+  const simStatus = useMemo<SimStatus>(() => {
+    if (running) return { kind: "running" };
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i]!;
+      if (e.type === "sim_ended") return { kind: "ended", reason: e.reason };
+    }
+    return { kind: "idle" };
+  }, [running, events]);
+
   return (
     <>
       <div className="page">
-        <ProviderStatus availability={availability} />
+        <ProviderStatus availability={availability} status={simStatus} />
         <ConfigPanel
           config={config}
           availability={availability}
