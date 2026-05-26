@@ -10,10 +10,11 @@ The system SHALL define a `GameConfig` type that fully specifies a simulation. T
 - `shared_system_prompt: string` (non-empty)
 - `initial_energy: number` (positive integer)
 - `max_rounds: number` (positive integer)
-- `info_mode: InformationMode` (discriminated union)
 - `pressure: PressureCurve` (discriminated union)
 - `allocation_policy: AllocationPolicy` (discriminated union)
 - `master_seed: number` (integer; consumed by the engine to seed deterministic RNG)
+
+Removed: `info_mode` (a 3-way mode picker that controlled per-round history visibility; agents now always see the full public history).
 
 #### Scenario: Round-trip serialization
 - **WHEN** a `GameConfig` is JSON-stringified and JSON-parsed back
@@ -24,6 +25,11 @@ The system SHALL define a `GameConfig` type that fully specifies a simulation. T
 - **WHEN** an old client POSTs a config containing the removed `max_requests_per_round` field
 - **THEN** the Zod validator MAY pass through (ignore) the extra field
 - **AND** the simulation SHALL run as if the field were absent (it has no effect on the engine)
+
+#### Scenario: Legacy info_mode field tolerated
+- **WHEN** an old client POSTs a config containing the removed `info_mode` field
+- **THEN** the Zod validator SHALL strip/ignore the extra field
+- **AND** the simulation SHALL run with full history visible to all agents (equivalent to the legacy `open` mode)
 
 ### Requirement: Agent Instance Identity
 The system SHALL assign each agent in a config a unique `id` of the form `A<n>` where `n` is a positive integer.
@@ -65,7 +71,7 @@ The system SHALL construct each agent's per-round prompt as `shared_system_promp
 
 #### Scenario: Prompt contains required state fields
 - **WHEN** a per-round prompt is constructed for agent `A1` at round 5
-- **THEN** the per-round state block SHALL contain: agent_id, current round, max_rounds, self energy, all agents' energies, inbox (filtered by info_mode), action schema description, and rules summary
+- **THEN** the per-round state block SHALL contain: agent_id, current round, max_rounds, self energy, all agents' energies, inbox, full history of public events since round 1, action schema description, and rules summary
 
 ### Requirement: JSON-only Response Contract
 The system SHALL instruct agents (via the prompt template) to respond with a single JSON object matching one of three action shapes, and SHALL parse responses strictly.

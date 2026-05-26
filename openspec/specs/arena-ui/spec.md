@@ -54,19 +54,20 @@ The system SHALL render form controls for every field in `GameConfig` except the
 Controls:
 - `initial_energy` — number input (default 10, min 1, max 100)
 - `max_rounds` — number input (default 30, min 1, max 200)
-- `info_mode` — radio (open / blind / partial) + conditional number input for `k`
 - `pressure` — radio (constant / linear / step) + conditional parameter inputs
 - `allocation_policy` — radio (fully_free / capped / proportional) + conditional `cap` input
 
 The system SHALL NOT render UI controls for:
 - `master_seed` (auto-randomized on every Start; see "Auto-randomized Master Seed")
 - `max_requests_per_round` (field removed from `GameConfig` entirely)
+- `info_mode` (field removed from `GameConfig`; agents always see full public history)
 
 #### Scenario: Defaults render without errors
 - **WHEN** the page first loads
 - **THEN** all listed controls SHALL be populated with the defaults above
 - **AND** no `master_seed` input SHALL appear
 - **AND** no `max_requests_per_round` input SHALL appear
+- **AND** no `info_mode` / "信息模式" control SHALL appear
 
 ### Requirement: Auto-randomized Master Seed
 The system SHALL replace `config.master_seed` with a fresh random integer immediately before POSTing to `/api/simulate`. The seed SHALL NOT be user-editable through the UI.

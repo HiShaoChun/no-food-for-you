@@ -160,5 +160,4 @@ The system SHALL include the `reason` of each transfer (if present) in the per-a
 #### Scenario: Reason appears in history for next round's view
 - **WHEN** in round N agent A1 allocates `{to:"A2",amount:2,reason:"看你能撑两轮"}` (applied)
 - **AND** the simulation continues to round N+1
-- **AND** info_mode allows N to be visible
 - **THEN** the view passed to agents in round N+1 SHALL surface the transfer entry from round N with its reason
