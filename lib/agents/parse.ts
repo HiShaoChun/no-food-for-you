@@ -87,14 +87,21 @@ function validateAction(obj: unknown): ParseResult {
     if (!Array.isArray(o.allocations)) {
       return { ok: false, error: "respond_allocations_not_array" };
     }
-    const allocs: { to: string; amount: number }[] = [];
+    const allocs: { to: string; amount: number; reason?: string }[] = [];
     for (const a of o.allocations) {
       if (typeof a !== "object" || a === null) continue;
       const ar = a as Record<string, unknown>;
       if (typeof ar.to !== "string" || typeof ar.amount !== "number") continue;
       // Drop non-integer / non-positive at validate time (settle.ts will also guard)
       if (!Number.isInteger(ar.amount) || ar.amount <= 0) continue;
-      allocs.push({ to: ar.to, amount: ar.amount });
+      // Reason is optional; only keep if it's a non-empty string. Non-string => drop silently.
+      const reason =
+        typeof ar.reason === "string" && ar.reason.trim().length > 0 ? ar.reason : undefined;
+      allocs.push({
+        to: ar.to,
+        amount: ar.amount,
+        ...(reason !== undefined ? { reason } : {}),
+      });
     }
     return {
       ok: true,

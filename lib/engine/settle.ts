@@ -23,7 +23,7 @@ export type SettleResult = {
   // Public history events recorded this round (already appended to next_state.history)
   events_this_round: HistoryEvent[];
   prev_energies: Record<string, number>;
-  transfers: Array<{ from: string; to: string; amount: number }>;
+  transfers: Array<{ from: string; to: string; amount: number; reason?: string }>;
   pressure_cost: number;
 };
 
@@ -44,7 +44,7 @@ export function settleRound(state: GameState, decisions: DecidedAction[]): Settl
   // Working copy of energies (we mutate as transfers apply)
   const energies: Record<string, number> = { ...state.energies };
   // Collect actual transfers (policy-truncated amounts)
-  const transfers: Array<{ from: string; to: string; amount: number }> = [];
+  const transfers: Array<{ from: string; to: string; amount: number; reason?: string }> = [];
 
   // Inboxes for NEXT round (current round's requests delivered next round)
   const nextInboxes: Record<string, InboxMessage[]> = {};
@@ -85,8 +85,21 @@ export function settleRound(state: GameState, decisions: DecidedAction[]): Settl
       if (give <= 0) continue;
       energies[agent_id] = senderE - give;
       energies[a.to] = (energies[a.to] ?? 0) + give;
-      eventsThisRound.push({ kind: "transfer", from: agent_id, to: a.to, amount: give });
-      transfers.push({ from: agent_id, to: a.to, amount: give });
+      const reasonText =
+        typeof a.reason === "string" && a.reason.trim().length > 0 ? a.reason : undefined;
+      eventsThisRound.push({
+        kind: "transfer",
+        from: agent_id,
+        to: a.to,
+        amount: give,
+        ...(reasonText !== undefined ? { reason: reasonText } : {}),
+      });
+      transfers.push({
+        from: agent_id,
+        to: a.to,
+        amount: give,
+        ...(reasonText !== undefined ? { reason: reasonText } : {}),
+      });
     }
   }
 
@@ -165,10 +178,14 @@ function applyPolicy(
   policy: AllocationPolicy,
   responderEnergy: number,
 ): Allocation[] {
-  // Filter to positive integer amounts up front
-  const clean = raw
+  // Filter to positive integer amounts up front (preserve reason)
+  const clean: Allocation[] = raw
     .filter((a) => Number.isInteger(a.amount) && a.amount > 0)
-    .map((a) => ({ to: a.to, amount: a.amount }));
+    .map((a) => ({
+      to: a.to,
+      amount: a.amount,
+      ...(typeof a.reason === "string" && a.reason.length > 0 ? { reason: a.reason } : {}),
+    }));
 
   if (clean.length === 0) return [];
 
@@ -205,7 +222,11 @@ function scaleDown(items: readonly Allocation[], budget: number): Allocation[] {
   const order = exact
     .map((x, i) => ({ i, frac: x - Math.floor(x) }))
     .sort((a, b) => b.frac - a.frac);
-  const result = items.map((a, i) => ({ to: a.to, amount: floors[i]! }));
+  const result: Allocation[] = items.map((a, i) => ({
+    to: a.to,
+    amount: floors[i]!,
+    ...(a.reason !== undefined ? { reason: a.reason } : {}),
+  }));
   for (const { i } of order) {
     if (remaining <= 0) break;
     result[i]!.amount += 1;

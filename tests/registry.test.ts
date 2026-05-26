@@ -88,8 +88,6 @@ describe("integration — full sim writes valid JSONL", () => {
       shared_system_prompt: "test",
       initial_energy: 5,
       max_rounds: 3,
-      max_requests_per_round: 1,
-      info_mode: { type: "open" },
       pressure: { type: "constant", amount: 1 },
       allocation_policy: { type: "fully_free" },
       master_seed: 7,

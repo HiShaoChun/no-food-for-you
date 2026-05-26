@@ -13,7 +13,7 @@ export type RoundOutput = {
   newly_eliminated: string[];
   next_state: GameState;
   prev_energies: Record<string, number>;
-  transfers: Array<{ from: string; to: string; amount: number }>;
+  transfers: Array<{ from: string; to: string; amount: number; reason?: string }>;
   pressure_cost: number;
 };
 

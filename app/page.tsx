@@ -17,6 +17,10 @@ function pickInitialModel(av: Availability | null): typeof MODEL_KEYS[number] {
   return MODEL_KEYS[0]!;
 }
 
+function randomSeed(): number {
+  return Math.floor(Math.random() * 1e9);
+}
+
 function defaultConfig(av: Availability | null): GameConfig {
   const m = pickInitialModel(av);
   return {
@@ -28,11 +32,9 @@ function defaultConfig(av: Availability | null): GameConfig {
     shared_system_prompt: DEFAULT_SHARED_SYSTEM_PROMPT,
     initial_energy: 10,
     max_rounds: 30,
-    max_requests_per_round: 1,
-    info_mode: { type: "partial", k: 3 },
     pressure: { type: "constant", amount: 1 },
     allocation_policy: { type: "fully_free" },
-    master_seed: 42,
+    master_seed: randomSeed(),
   };
 }
 
@@ -72,11 +74,14 @@ export default function Page(): React.ReactElement {
     setEvents([]);
     seenKeys.current = new Set();
     setRunning(true);
+    // Fresh seed every Start — keep config state in sync so any consumers see what was POSTed
+    const seededConfig: GameConfig = { ...config, master_seed: randomSeed() };
+    setConfig(seededConfig);
     try {
       const res = await fetch("/api/simulate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
+        body: JSON.stringify(seededConfig),
       });
       if (!res.ok) {
         const body = await res.text();

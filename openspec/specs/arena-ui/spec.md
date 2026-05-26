@@ -54,15 +54,32 @@ The system SHALL render form controls for every field in `GameConfig` except the
 Controls:
 - `initial_energy` — number input (default 10, min 1, max 100)
 - `max_rounds` — number input (default 30, min 1, max 200)
-- `max_requests_per_round` — number input (default 1, min 1, max 5)
 - `info_mode` — radio (open / blind / partial) + conditional number input for `k`
 - `pressure` — radio (constant / linear / step) + conditional parameter inputs
 - `allocation_policy` — radio (fully_free / capped / proportional) + conditional `cap` input
-- `master_seed` — number input with a "🎲 random" button
+
+The system SHALL NOT render UI controls for:
+- `master_seed` (auto-randomized on every Start; see "Auto-randomized Master Seed")
+- `max_requests_per_round` (field removed from `GameConfig` entirely)
 
 #### Scenario: Defaults render without errors
 - **WHEN** the page first loads
-- **THEN** all controls SHALL be populated with the defaults listed above
+- **THEN** all listed controls SHALL be populated with the defaults above
+- **AND** no `master_seed` input SHALL appear
+- **AND** no `max_requests_per_round` input SHALL appear
+
+### Requirement: Auto-randomized Master Seed
+The system SHALL replace `config.master_seed` with a fresh random integer immediately before POSTing to `/api/simulate`. The seed SHALL NOT be user-editable through the UI.
+
+#### Scenario: Each Start uses a new seed
+- **WHEN** the user clicks Start twice in succession with the same config
+- **THEN** the two simulations SHALL run with two different `master_seed` values
+- **AND** each run's `sim_started` event SHALL record the seed used (for reproducibility via JSONL)
+
+#### Scenario: Seed is not in the form
+- **WHEN** the user inspects the Config Panel
+- **THEN** no input control SHALL exist for `master_seed`
+- **AND** no 🎲 button SHALL exist
 
 ### Requirement: Shared System Prompt Editor
 The system SHALL render a `<textarea>` for editing the `shared_system_prompt`. The textarea SHALL pre-fill with a sensible default prompt.
@@ -95,9 +112,14 @@ The system SHALL render LLM interactions as a vertically scrolling timeline of c
 - **THEN** a bubble SHALL appear showing the source agent's display_name, the target agent's display_name, and the message text
 - **AND** the bubble SHALL be styled distinctly from response bubbles
 
-#### Scenario: Respond bubble
-- **WHEN** an `agent_decision` event arrives with `parsed.action === "respond"`
+#### Scenario: Respond bubble without reasons
+- **WHEN** an `agent_decision` event arrives with `parsed.action === "respond"` and no allocations carry a `reason`
 - **THEN** a bubble SHALL appear listing each allocation as "→ <to>: <amount>"
+
+#### Scenario: Respond bubble with reasons
+- **WHEN** an `agent_decision` event arrives with `parsed.action === "respond"` and at least one allocation has a non-empty `reason`
+- **THEN** the bubble SHALL render each allocation with its reason inline (e.g. "→ <to>: <amount> · <reason>")
+- **AND** allocations without `reason` SHALL render normally (no trailing separator/blank)
 
 #### Scenario: Noop or parse_error
 - **WHEN** an `agent_decision` event arrives with `parsed === null` or `parsed.action === "noop"`
@@ -148,6 +170,11 @@ The card SHALL contain:
 #### Scenario: Transfers row omitted when empty
 - **WHEN** `transfers === []`
 - **THEN** the transfers row SHALL NOT render (no empty heading)
+
+#### Scenario: Transfer chip exposes reason as tooltip
+- **WHEN** a `transfers[i]` entry has a non-empty `reason`
+- **THEN** the rendered chip SHALL include the reason text in its `title` attribute (HTML tooltip)
+- **AND** the visible chip layout SHALL NOT change (to preserve horizontal density)
 
 #### Scenario: Backward compatibility with legacy logs
 - **WHEN** a `round_settled` event arrives without `prev_energies` or `transfers` (older log)

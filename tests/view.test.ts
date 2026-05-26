@@ -13,8 +13,6 @@ function baseConfig(): GameConfig {
     shared_system_prompt: "test",
     initial_energy: 10,
     max_rounds: 30,
-    max_requests_per_round: 1,
-    info_mode: { type: "open" },
     pressure: { type: "constant", amount: 1 },
     allocation_policy: { type: "fully_free" },
     master_seed: 1,
@@ -33,7 +31,7 @@ function stateAt(round: number, history: HistoryEntry[], cfg: GameConfig): GameS
   };
 }
 
-describe("buildView — information modes", () => {
+describe("buildView — history is always full", () => {
   const history: HistoryEntry[] = [
     { round: 1, events: [{ kind: "request", from: "A1", to: "A2", message: "r1" }] },
     { round: 2, events: [{ kind: "request", from: "A2", to: "A3", message: "r2" }] },
@@ -42,22 +40,11 @@ describe("buildView — information modes", () => {
     { round: 5, events: [{ kind: "request", from: "A1", to: "A2", message: "r5" }] },
   ];
 
-  it("open mode → full history", () => {
-    const s = stateAt(6, history, { ...baseConfig(), info_mode: { type: "open" } });
+  it("returns the full public history regardless of round", () => {
+    const s = stateAt(6, history, baseConfig());
     const v = buildView(s, "A1");
     expect(v.history.length).toBe(5);
-  });
-
-  it("blind mode → empty history", () => {
-    const s = stateAt(6, history, { ...baseConfig(), info_mode: { type: "blind" } });
-    const v = buildView(s, "A1");
-    expect(v.history).toEqual([]);
-  });
-
-  it("partial mode k=3 → last 3 rounds (rounds >= 6-3 = 3)", () => {
-    const s = stateAt(6, history, { ...baseConfig(), info_mode: { type: "partial", k: 3 } });
-    const v = buildView(s, "A1");
-    expect(v.history.map((h) => h.round)).toEqual([3, 4, 5]);
+    expect(v.history.map((h) => h.round)).toEqual([1, 2, 3, 4, 5]);
   });
 });
 

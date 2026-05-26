@@ -53,6 +53,65 @@ describe("parseAgentResponse — markdown code fences", () => {
   });
 });
 
+describe("parseAgentResponse — allocation reason", () => {
+  it("preserves reason when present and non-empty", () => {
+    const r = parseAgentResponse(
+      '{"action":"respond","allocations":[{"to":"A2","amount":3,"reason":"看你还能撑两轮"}]}',
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok && r.action.action === "respond") {
+      expect(r.action.allocations).toEqual([
+        { to: "A2", amount: 3, reason: "看你还能撑两轮" },
+      ]);
+    }
+  });
+
+  it("omits reason field when absent (legacy shape)", () => {
+    const r = parseAgentResponse(
+      '{"action":"respond","allocations":[{"to":"A2","amount":3}]}',
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok && r.action.action === "respond") {
+      expect(r.action.allocations[0]).toEqual({ to: "A2", amount: 3 });
+      expect(r.action.allocations[0]!.reason).toBeUndefined();
+    }
+  });
+
+  it("drops non-string reason silently", () => {
+    const r = parseAgentResponse(
+      '{"action":"respond","allocations":[{"to":"A2","amount":3,"reason":12345}]}',
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok && r.action.action === "respond") {
+      expect(r.action.allocations[0]).toEqual({ to: "A2", amount: 3 });
+      expect(r.action.allocations[0]!.reason).toBeUndefined();
+    }
+  });
+
+  it("drops empty/whitespace-only reason", () => {
+    const r = parseAgentResponse(
+      '{"action":"respond","allocations":[{"to":"A2","amount":3,"reason":"   "}]}',
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok && r.action.action === "respond") {
+      expect(r.action.allocations[0]!.reason).toBeUndefined();
+    }
+  });
+
+  it("keeps reason on some entries, omits on others", () => {
+    const r = parseAgentResponse(
+      '{"action":"respond","allocations":[{"to":"A2","amount":3,"reason":"信你一回"},{"to":"A3","amount":1}]}',
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok && r.action.action === "respond") {
+      expect(r.action.allocations).toEqual([
+        { to: "A2", amount: 3, reason: "信你一回" },
+        { to: "A3", amount: 1 },
+      ]);
+    }
+  });
+});
+
 describe("parseAgentResponse — invalid", () => {
   it("empty string", () => {
     const r = parseAgentResponse("");

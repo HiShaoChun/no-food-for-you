@@ -9,12 +9,6 @@ const AgentInstanceSchema = z.object({
   }),
 });
 
-const InformationModeSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("open") }),
-  z.object({ type: z.literal("blind") }),
-  z.object({ type: z.literal("partial"), k: z.number().int().positive() }),
-]);
-
 const PressureCurveSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("constant"), amount: z.number().int().nonnegative() }),
   z.object({
@@ -39,8 +33,6 @@ export const GameConfigSchema = z.object({
   shared_system_prompt: z.string().min(1),
   initial_energy: z.number().int().positive().max(1000),
   max_rounds: z.number().int().positive().max(500),
-  max_requests_per_round: z.number().int().positive().max(10),
-  info_mode: InformationModeSchema,
   pressure: PressureCurveSchema,
   allocation_policy: AllocationPolicySchema,
   master_seed: z.number().int(),

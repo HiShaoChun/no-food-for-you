@@ -58,3 +58,5 @@ pnpm test        # vitest run
 - **2026-05-25** `add-mvp-arena` 提案立项：Next.js 单仓 / Ark 单 key / 5 capability 划分
 - **2026-05-25** `add-mvp-arena` 实现完成并归档：53 单测全过、typecheck 严格、lint 零警告、production build 成功。5 个 capability spec 合入 `openspec/specs/`。
 - **2026-05-26** `enhance-arena-feedback` 实现完成并归档：扩展 round_settled 事件（prev_energies / transfers / pressure_cost），新增 3 个 UI 组件（RoundSettleCard / TombstoneCard / FinalStandings），62 单测全过。registry 增加 per-sim write serialization 修复 JSONL 写入顺序问题。
+- **2026-05-26** `tune-agent-voice` 实现完成并归档：DEFAULT_SHARED_SYSTEM_PROMPT 注入"说话风格"段（4 条规则 + 9 条正面范本 + 自检指令），去除 LLM 默认的 AI 邮件腔；`Allocation` / `HistoryEvent.transfer` / `round_settled.transfers` 全部加 `reason?: string` 可选字段，让 agent 在转账时附理由——UI 在 bubble 和 transfer chip 上展示，且 reason 会进入下一回合的 view 历史里参与博弈。69 单测全过。
+- **2026-05-26** `simplify-config-ui` 实现完成并归档：从 `GameConfig` 彻底移除从未被引擎读取的 `max_requests_per_round` 死字段；`master_seed` 改为每次 Start 自动随机（不再要用户填），seed 仍持久化在 sim_started 事件里供复现。Config Panel 减少 2 个输入框。69 单测仍全过。

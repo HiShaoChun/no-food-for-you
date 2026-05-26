@@ -6,7 +6,7 @@
 The system SHALL run simulations as a sequence of discrete rounds. Each round SHALL execute the following phases in order, with no concurrent side effects across rounds.
 
 Phases:
-1. **State broadcast** — build a per-agent view based on the information mode
+1. **State broadcast** — build a per-agent view containing the full public history since round 1
 2. **Decision** — each agent produces ONE action (Request / Respond / No-op); decisions within a single round MAY execute in parallel
 3. **Request aggregation** — collect all `Request` actions and route to target inboxes for the next round
 4. **Response execution** — apply `Respond` actions (allocations) declared in this round (responding to inbox carried from the previous round)
@@ -90,21 +90,6 @@ The system SHALL mark an agent as eliminated at settlement if and only if its en
 - **THEN** the agent SHALL survive
   - (Note: this scenario is theoretical because settlement runs once at end-of-round, but the rule is stated for completeness)
 
-### Requirement: Information Modes
-The system SHALL build each agent's per-round view according to the configured information mode.
-
-#### Scenario: Open mode
-- **WHEN** `info_mode.type === "open"`
-- **THEN** the view SHALL include the full request/allocation history of all agents since round 1
-
-#### Scenario: Blind mode
-- **WHEN** `info_mode.type === "blind"`
-- **THEN** the view SHALL include only current-round energies and the current inbox; no historical events
-
-#### Scenario: Partial mode
-- **WHEN** `info_mode.type === "partial"` with `k = 3`
-- **THEN** the view SHALL include events from the most recent 3 rounds only
-
 ### Requirement: Termination Conditions
 The system SHALL end a simulation when any of the following occur. The ended state SHALL emit a `sim_ended` event with the matching reason.
 
@@ -134,7 +119,7 @@ Fields:
 - `round` — the round number that just settled
 - `prev_energies` — every registered agent's energy at round-start (before transfers and pressure deduction)
 - `energies` — every registered agent's energy at round-end (after settlement); eliminated agents appear at 0
-- `transfers` — array of `{ from, to, amount }` records describing every actual integer energy transfer applied this round (already truncated/scaled per allocation policy)
+- `transfers` — array of `{ from, to, amount, reason? }` records describing every actual integer energy transfer applied this round (already truncated/scaled per allocation policy). `reason` is optional and carries the responder's stated reason for that allocation (if the agent provided one).
 - `pressure_cost` — the integer maintenance fee deducted from each living agent this round
 - `eliminated` — agent IDs newly eliminated this round (not the cumulative set)
 - `t` — ISO-8601 timestamp
@@ -152,6 +137,14 @@ Fields:
 - **WHEN** a round had no successful allocations
 - **THEN** `transfers` SHALL be `[]` (never `undefined` or missing)
 
+#### Scenario: Transfer carries allocation reason when present
+- **WHEN** an agent allocated `{"to":"A2","amount":3,"reason":"看你还能撑两轮"}` and the engine applied it
+- **THEN** the matching `transfers` entry SHALL include `reason: "看你还能撑两轮"`
+
+#### Scenario: Transfer without reason
+- **WHEN** an agent allocated `{"to":"A2","amount":3}` (no reason)
+- **THEN** the matching `transfers` entry SHALL NOT include a `reason` field (or SHALL have it as undefined)
+
 #### Scenario: pressure_cost reflects the configured curve at this round
 - **WHEN** `pressure.type === "linear"` with `start=1, step=1` and round is 5
 - **THEN** `pressure_cost` SHALL equal 5
@@ -160,3 +153,12 @@ Fields:
 - **WHEN** an agent is eliminated this round
 - **THEN** `eliminated` SHALL list that agent's ID
 - **AND** `energies[<id>]` SHALL equal 0
+
+### Requirement: Reason Propagates Into Subsequent Round Views
+The system SHALL include the `reason` of each transfer (if present) in the per-agent view that the next round's decision phase receives, so agents can incorporate prior allocation reasons into their reasoning.
+
+#### Scenario: Reason appears in history for next round's view
+- **WHEN** in round N agent A1 allocates `{to:"A2",amount:2,reason:"看你能撑两轮"}` (applied)
+- **AND** the simulation continues to round N+1
+- **AND** info_mode allows N to be visible
+- **THEN** the view passed to agents in round N+1 SHALL surface the transfer entry from round N with its reason

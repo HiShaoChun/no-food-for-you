@@ -3,7 +3,6 @@
 import type {
   AllocationPolicy,
   GameConfig,
-  InformationMode,
   PressureCurve,
 } from "@/lib/engine/types";
 import type { Availability } from "@/lib/llm/availability";
@@ -72,45 +71,27 @@ export function ConfigPanel({ config, availability, running, onChange, onStart }
           />
         </div>
 
-        <div className="field">
-          <label>每回合最多请求数</label>
-          <input
-            type="number"
-            min={1}
-            max={5}
-            value={config.max_requests_per_round}
-            onChange={(e) => patch("max_requests_per_round", parseInt(e.target.value || "1", 10))}
-          />
-        </div>
-
-        <div className="field">
-          <label>种子 (master_seed)</label>
-          <div className="field-inline">
-            <input
-              type="number"
-              value={config.master_seed}
-              onChange={(e) => patch("master_seed", parseInt(e.target.value || "0", 10))}
-              style={{ flex: 1 }}
-            />
-            <button
-              className="btn-ghost"
-              onClick={() => patch("master_seed", Math.floor(Math.random() * 1e9))}
-              title="随机种子"
-            >
-              🎲
-            </button>
-          </div>
-        </div>
       </div>
 
       <div className="section">
-        <h3>信息模式</h3>
-        <InfoModeControl value={config.info_mode} onChange={(v) => patch("info_mode", v)} />
-      </div>
-
-      <div className="section">
-        <h3>压力曲线</h3>
-        <PressureControl value={config.pressure} onChange={(v) => patch("pressure", v)} />
+        <h3>
+          压力曲线
+          <span
+            className="section-hint"
+            title="结算阶段对每位存活 agent 扣除能量；扣减总量越大越接近淘汰"
+            aria-hidden
+          >
+            ⓘ
+          </span>
+        </h3>
+        <p className="section-desc">
+          每回合结算时从所有存活 agent 自动扣减的能量。能量到 0 即淘汰。
+        </p>
+        <PressureControl
+          value={config.pressure}
+          maxRounds={config.max_rounds}
+          onChange={(v) => patch("pressure", v)}
+        />
       </div>
 
       <div className="section">
@@ -166,73 +147,19 @@ function PromptMeta({
   );
 }
 
-function InfoModeControl({
-  value,
-  onChange,
-}: {
-  value: InformationMode;
-  onChange: (v: InformationMode) => void;
-}): React.ReactElement {
-  return (
-    <>
-      <div className="radio-group">
-        <label>
-          <input
-            type="radio"
-            name="info_mode"
-            checked={value.type === "open"}
-            onChange={() => onChange({ type: "open" })}
-          />
-          Open
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="info_mode"
-            checked={value.type === "blind"}
-            onChange={() => onChange({ type: "blind" })}
-          />
-          Blind
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="info_mode"
-            checked={value.type === "partial"}
-            onChange={() => onChange({ type: "partial", k: 3 })}
-          />
-          Partial
-        </label>
-      </div>
-      {value.type === "partial" && (
-        <div className="field" style={{ marginTop: 6 }}>
-          <label>K (最近回合数)</label>
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={value.k}
-            onChange={(e) =>
-              onChange({ type: "partial", k: parseInt(e.target.value || "3", 10) })
-            }
-          />
-        </div>
-      )}
-    </>
-  );
-}
-
 function PressureControl({
   value,
+  maxRounds,
   onChange,
 }: {
   value: PressureCurve;
+  maxRounds: number;
   onChange: (v: PressureCurve) => void;
 }): React.ReactElement {
   return (
     <>
-      <div className="radio-group">
-        <label>
+      <div className="radio-group" role="radiogroup">
+        <label title="每回合扣减相同能量">
           <input
             type="radio"
             name="pressure"
@@ -241,7 +168,7 @@ function PressureControl({
           />
           Constant
         </label>
-        <label>
+        <label title="扣减量线性递增">
           <input
             type="radio"
             name="pressure"
@@ -250,7 +177,7 @@ function PressureControl({
           />
           Linear
         </label>
-        <label>
+        <label title="扣减量在阈值处跳升">
           <input
             type="radio"
             name="pressure"
@@ -260,9 +187,10 @@ function PressureControl({
           Step
         </label>
       </div>
+      <p className="mode-desc">{describePressureMode(value)}</p>
       {value.type === "constant" && (
         <div className="field" style={{ marginTop: 6 }}>
-          <label>每回合扣</label>
+          <label>每回合扣减</label>
           <input
             type="number"
             min={0}
@@ -277,7 +205,7 @@ function PressureControl({
       {value.type === "linear" && (
         <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
           <div className="field" style={{ flex: 1 }}>
-            <label>起始</label>
+            <label title="第 1 回合的扣减量">起始 (R1)</label>
             <input
               type="number"
               min={0}
@@ -288,7 +216,7 @@ function PressureControl({
             />
           </div>
           <div className="field" style={{ flex: 1 }}>
-            <label>每回合 +</label>
+            <label title="每回合在前一回合基础上再多扣的量">每回合 +Δ</label>
             <input
               type="number"
               min={0}
@@ -302,7 +230,9 @@ function PressureControl({
       )}
       {value.type === "step" && (
         <div className="field" style={{ marginTop: 6 }}>
-          <label>阈值（逗号分隔，例如 10,20）</label>
+          <label title="例如 10,20 表示 R1..10 扣 1，R11..20 扣 2，R21+ 扣 3">
+            阈值（逗号分隔，例如 10,20）
+          </label>
           <input
             type="text"
             value={value.thresholds.join(",")}
@@ -316,7 +246,104 @@ function PressureControl({
           />
         </div>
       )}
+      <PressurePreview curve={value} maxRounds={maxRounds} />
     </>
+  );
+}
+
+function describePressureMode(v: PressureCurve): string {
+  switch (v.type) {
+    case "constant":
+      return "固定难度：每回合从每位存活 agent 扣减相同能量。";
+    case "linear":
+      return "逐步加压：扣减量按 start + step × (round − 1) 线性递增，越往后越艰难。";
+    case "step":
+      return "阶梯加压：每越过一个阈值，扣减量就跳升 1 点。";
+  }
+}
+
+function PressurePreview({
+  curve,
+  maxRounds,
+}: {
+  curve: PressureCurve;
+  maxRounds: number;
+}): React.ReactElement {
+  const totalRounds = Math.max(1, maxRounds);
+
+  if (curve.type === "constant") {
+    const total = curve.amount * totalRounds;
+    return (
+      <div className="curve-preview">
+        <span className="preview-label">预览</span>
+        <span className="preview-chip">每回合 −{curve.amount}</span>
+        <span className="preview-sep">·</span>
+        <span className="preview-chip muted">
+          {totalRounds} 回合累计 −{total}
+        </span>
+      </div>
+    );
+  }
+
+  if (curve.type === "linear") {
+    const candidates = [1, 2, 3, 5, 10, totalRounds];
+    const checkpoints = candidates
+      .filter((r, i, arr) => r <= totalRounds && arr.indexOf(r) === i)
+      .sort((a, b) => a - b);
+    let total = 0;
+    for (let r = 1; r <= totalRounds; r++) {
+      total += Math.max(0, curve.start + curve.step * (r - 1));
+    }
+    return (
+      <div className="curve-preview">
+        <span className="preview-label">预览</span>
+        {checkpoints.map((r) => {
+          const cost = curve.start + curve.step * (r - 1);
+          return (
+            <span className="preview-chip" key={r}>
+              R{r} −{cost}
+            </span>
+          );
+        })}
+        <span className="preview-sep">·</span>
+        <span className="preview-chip muted">累计 −{total}</span>
+      </div>
+    );
+  }
+
+  // step
+  const sorted = [...curve.thresholds].sort((a, b) => a - b);
+  const segments: Array<{ from: number; to: number; cost: number }> = [];
+  let prev = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const t = sorted[i]!;
+    if (t > prev && prev < totalRounds) {
+      segments.push({
+        from: prev + 1,
+        to: Math.min(t, totalRounds),
+        cost: i + 1,
+      });
+      prev = t;
+    }
+  }
+  if (prev < totalRounds) {
+    segments.push({ from: prev + 1, to: totalRounds, cost: sorted.length + 1 });
+  }
+  const total = segments.reduce(
+    (acc, s) => acc + s.cost * (s.to - s.from + 1),
+    0,
+  );
+  return (
+    <div className="curve-preview">
+      <span className="preview-label">预览</span>
+      {segments.map((s, i) => (
+        <span className="preview-chip" key={i}>
+          {s.from === s.to ? `R${s.from}` : `R${s.from}..${s.to}`} −{s.cost}
+        </span>
+      ))}
+      <span className="preview-sep">·</span>
+      <span className="preview-chip muted">累计 −{total}</span>
+    </div>
   );
 }
 

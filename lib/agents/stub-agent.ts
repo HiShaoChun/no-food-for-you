@@ -10,7 +10,7 @@ import type { AgentDecisionResult, AgentRuntime, AgentView } from "@/lib/engine/
 export type StubStrategy =
   | { type: "always_noop" }
   | { type: "request_poorest"; amount: number; message?: string }
-  | { type: "respond_first_inbox"; amount: number }
+  | { type: "respond_first_inbox"; amount: number; reason?: string }
   | { type: "respond_all_inbox_equally"; total: number };
 
 export function makeStubAgent(id: string, strategy: StubStrategy): AgentRuntime {
@@ -51,7 +51,13 @@ function decideStub(
       const first = view.inbox[0]!;
       return {
         action: "respond",
-        allocations: [{ to: first.from, amount: strategy.amount }],
+        allocations: [
+          {
+            to: first.from,
+            amount: strategy.amount,
+            ...(strategy.reason ? { reason: strategy.reason } : {}),
+          },
+        ],
       };
     }
 

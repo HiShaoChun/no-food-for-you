@@ -1,13 +1,6 @@
-import type {
-  AgentView,
-  GameState,
-  HistoryEntry,
-  InformationMode,
-  PressureCurve,
-} from "./types";
+import type { AgentView, GameState, PressureCurve } from "./types";
 
 export function buildView(state: GameState, agentId: string): AgentView {
-  const filteredHistory = filterHistory(state.history, state.round, state.config.info_mode);
   return {
     agent_id: agentId,
     round: state.round,
@@ -15,26 +8,9 @@ export function buildView(state: GameState, agentId: string): AgentView {
     self_energy: state.energies[agentId] ?? 0,
     all_energies: { ...state.energies },
     inbox: [...(state.inboxes[agentId] ?? [])],
-    history: filteredHistory,
+    history: state.history,
     pressure_description: describePressure(state.config.pressure, state.round),
   };
-}
-
-function filterHistory(
-  history: HistoryEntry[],
-  currentRound: number,
-  mode: InformationMode,
-): HistoryEntry[] {
-  switch (mode.type) {
-    case "open":
-      return history;
-    case "blind":
-      return [];
-    case "partial": {
-      const cutoff = currentRound - mode.k;
-      return history.filter((e) => e.round >= cutoff);
-    }
-  }
 }
 
 export function describePressure(curve: PressureCurve, round: number): string {

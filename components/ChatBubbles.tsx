@@ -10,6 +10,7 @@ import { computeStats } from "@/lib/stats/aggregate";
 type Props = {
   agents: AgentInstance[];
   events: SimEvent[];
+  initialEnergy: number;
 };
 
 function agentColor(agents: AgentInstance[], id: string): string {
@@ -22,7 +23,7 @@ function Avatar({ color }: { color: string }): React.ReactElement {
   return <span className="avatar" style={{ background: color }} aria-hidden />;
 }
 
-export function ChatBubbles({ agents, events }: Props): React.ReactElement {
+export function ChatBubbles({ agents, events, initialEnergy }: Props): React.ReactElement {
   const ref = useRef<HTMLDivElement>(null);
   const nameOf = (id: string): string => agents.find((a) => a.id === id)?.display_name ?? id;
 
@@ -103,6 +104,7 @@ export function ChatBubbles({ agents, events }: Props): React.ReactElement {
                       <span className="arrow">→</span>
                       {nameOf(al.to)}
                       <span className="amount">{al.amount}</span>
+                      {al.reason && <span className="alloc-reason">· {al.reason}</span>}
                     </span>
                   ))}
                 </div>
@@ -145,6 +147,7 @@ export function ChatBubbles({ agents, events }: Props): React.ReactElement {
           key={`settle-${e.round}-${idx}`}
           event={e}
           agents={agents}
+          initialEnergy={initialEnergy}
         />,
       );
       return;

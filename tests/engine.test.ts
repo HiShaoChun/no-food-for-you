@@ -13,8 +13,6 @@ function cfg(overrides: Partial<GameConfig> = {}): GameConfig {
     shared_system_prompt: "test",
     initial_energy: 10,
     max_rounds: 20,
-    max_requests_per_round: 1,
-    info_mode: { type: "open" },
     pressure: { type: "constant", amount: 1 },
     allocation_policy: { type: "fully_free" },
     master_seed: 42,
@@ -232,23 +230,53 @@ describe("runSimulation — capped allocation policy", () => {
   });
 });
 
-describe("runSimulation — blind mode hides history", () => {
-  it("agents in blind mode produce same actions regardless of past", async () => {
+describe("runSimulation — allocation reason propagation", () => {
+  it("transfer in round_settled carries reason from agent's allocation", async () => {
     const events: SimEvent[] = [];
     await runSimulation(
-      cfg({ info_mode: { type: "blind" }, max_rounds: 5 }),
+      cfg({ initial_energy: 10, max_rounds: 3 }),
       {
         sim_id: "x",
         agents: [
-          makeStubAgent("A1", { type: "request_poorest", amount: 1 }),
+          makeStubAgent("A1", { type: "respond_first_inbox", amount: 2, reason: "信你一回" }),
+          makeStubAgent("A2", { type: "request_poorest", amount: 1 }),
+          makeStubAgent("A3", { type: "request_poorest", amount: 1 }),
+        ],
+        emit: (e) => events.push(e),
+      },
+    );
+    const settled = events.filter((e) => e.type === "round_settled");
+    // R1: no inbox → no transfer
+    // R2: A1 has inbox, responds with reason
+    const r2 = settled[1];
+    expect(r2?.type).toBe("round_settled");
+    if (r2 && r2.type === "round_settled") {
+      const withReason = r2.transfers.filter((t) => t.reason === "信你一回");
+      expect(withReason.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("transfer without reason has no reason field on event", async () => {
+    const events: SimEvent[] = [];
+    await runSimulation(
+      cfg({ initial_energy: 10, max_rounds: 3 }),
+      {
+        sim_id: "x",
+        agents: [
+          makeStubAgent("A1", { type: "respond_first_inbox", amount: 2 }), // no reason
           makeStubAgent("A2", { type: "request_poorest", amount: 1 }),
           makeStubAgent("A3", { type: "always_noop" }),
         ],
         emit: (e) => events.push(e),
       },
     );
-    // Just verifies no crash and produces decisions.
-    const decisions = events.filter((e) => e.type === "agent_decision");
-    expect(decisions.length).toBeGreaterThan(0);
+    const settled = events.filter((e) => e.type === "round_settled");
+    for (const s of settled) {
+      if (s.type !== "round_settled") continue;
+      for (const t of s.transfers) {
+        expect(t.reason).toBeUndefined();
+      }
+    }
   });
 });
+

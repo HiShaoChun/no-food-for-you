@@ -8,11 +8,6 @@ export type AgentInstance = {
   model_key: ModelKey;
 };
 
-export type InformationMode =
-  | { type: "open" }
-  | { type: "blind" }
-  | { type: "partial"; k: number };
-
 export type PressureCurve =
   | { type: "constant"; amount: number }
   | { type: "linear"; start: number; step: number }
@@ -28,8 +23,6 @@ export type GameConfig = {
   shared_system_prompt: string;
   initial_energy: number;
   max_rounds: number;
-  max_requests_per_round: number;
-  info_mode: InformationMode;
   pressure: PressureCurve;
   allocation_policy: AllocationPolicy;
   master_seed: number;
@@ -46,6 +39,7 @@ export type RequestAction = {
 export type Allocation = {
   to: string;
   amount: number;
+  reason?: string;
 };
 
 export type RespondAction = {
@@ -76,7 +70,7 @@ export type AgentView = {
   self_energy: number;
   all_energies: Record<string, number>;
   inbox: InboxMessage[];
-  history: HistoryEntry[]; // filtered by info_mode
+  history: HistoryEntry[]; // full history of public events
   pressure_description: string; // human-readable for prompt
 };
 
@@ -87,7 +81,7 @@ export type HistoryEntry = {
 
 export type HistoryEvent =
   | { kind: "request"; from: string; to: string; message: string }
-  | { kind: "transfer"; from: string; to: string; amount: number };
+  | { kind: "transfer"; from: string; to: string; amount: number; reason?: string };
 
 // ───── Engine state (lives across rounds) ─────
 
@@ -124,7 +118,7 @@ export type SimEvent =
       round: number;
       prev_energies: Record<string, number>; // round-start snapshot
       energies: Record<string, number>; // post-settlement
-      transfers: Array<{ from: string; to: string; amount: number }>; // policy-applied
+      transfers: Array<{ from: string; to: string; amount: number; reason?: string }>; // policy-applied
       pressure_cost: number; // maintenance fee deducted from each living agent
       eliminated: string[]; // newly eliminated this round
       t: string;

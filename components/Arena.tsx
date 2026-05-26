@@ -23,7 +23,11 @@ export function Arena({ config, events }: Props): React.ReactElement {
       <div className="chart-wrap">
         <EnergyChart agents={config.agents} series={series} />
       </div>
-      <ChatBubbles agents={config.agents} events={events} />
+      <ChatBubbles
+        agents={config.agents}
+        events={events}
+        initialEnergy={config.initial_energy}
+      />
       <TokenMeter events={events} />
     </main>
   );
