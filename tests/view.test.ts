@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildView, pressureCost } from "@/lib/engine/view";
+import {
+  buildDecisionView,
+  buildResponseView,
+  pressureCost,
+} from "@/lib/engine/view";
 import type { GameConfig, GameState, HistoryEntry } from "@/lib/engine/types";
+import type { DefectionRecord, Pledge } from "@/lib/engine/pledge";
 import { makeRng } from "@/lib/engine/rng";
 
 function baseConfig(): GameConfig {
@@ -16,48 +21,72 @@ function baseConfig(): GameConfig {
     pressure: { type: "constant", amount: 1 },
     allocation_policy: { type: "fully_free" },
     master_seed: 1,
+    pledges: { enabled: true, betrayal_bonus_table: [3, 1, 0, -2], keep_promise_bonus: 0 },
   };
 }
 
-function stateAt(round: number, history: HistoryEntry[], cfg: GameConfig): GameState {
+function stateAt(
+  round: number,
+  history: HistoryEntry[],
+  cfg: GameConfig,
+  pledges: Pledge[] = [],
+  defections: DefectionRecord[] = [],
+): GameState {
   return {
     config: cfg,
     round,
     energies: { A1: 8, A2: 6, A3: 5 },
     eliminated: new Set(),
-    inboxes: { A1: [], A2: [{ from: "A1", round: round - 1, message: "hi" }], A3: [] },
     history,
+    public_pledges: pledges,
+    recent_defections: defections,
     rng: makeRng(1),
   };
 }
 
-describe("buildView — history is always full", () => {
-  const history: HistoryEntry[] = [
-    { round: 1, events: [{ kind: "request", from: "A1", to: "A2", message: "r1" }] },
-    { round: 2, events: [{ kind: "request", from: "A2", to: "A3", message: "r2" }] },
-    { round: 3, events: [{ kind: "request", from: "A3", to: "A1", message: "r3" }] },
-    { round: 4, events: [{ kind: "request", from: "A1", to: "A2", message: "r4" }] },
-    { round: 5, events: [{ kind: "request", from: "A1", to: "A2", message: "r5" }] },
-  ];
+describe("buildDecisionView", () => {
+  it("includes full history regardless of round", () => {
+    const hist: HistoryEntry[] = [
+      { round: 1, events: [{ kind: "request", from: "A1", to: "A2", message: "r1" }] },
+      { round: 2, events: [{ kind: "request", from: "A2", to: "A3", message: "r2" }] },
+    ];
+    const v = buildDecisionView(stateAt(3, hist, baseConfig()), "A1");
+    expect(v.phase).toBe("decision");
+    expect(v.history.length).toBe(2);
+  });
 
-  it("returns the full public history regardless of round", () => {
-    const s = stateAt(6, history, baseConfig());
-    const v = buildView(s, "A1");
-    expect(v.history.length).toBe(5);
-    expect(v.history.map((h) => h.round)).toEqual([1, 2, 3, 4, 5]);
+  it("populates public_pledges and pending_pledges (filtered by self)", () => {
+    const p1: Pledge = { from: "A1", to: "A2", amount: 2, round_made: 1, due_round: 2 };
+    const p2: Pledge = { from: "A2", to: "A1", amount: 3, round_made: 1, due_round: 2 };
+    const s = stateAt(2, [], baseConfig(), [p1, p2]);
+    const v = buildDecisionView(s, "A1");
+    expect(v.public_pledges).toEqual([p1, p2]);
+    expect(v.pending_pledges).toEqual([p1]); // only A1's debts
+  });
+
+  it("populates recent_defections", () => {
+    const d: DefectionRecord = { round_due: 2, from: "A2", to: "A1", pledged: 3, actual: 0 };
+    const v = buildDecisionView(stateAt(3, [], baseConfig(), [], [d]), "A1");
+    expect(v.recent_defections).toEqual([d]);
   });
 });
 
-describe("buildView — base fields", () => {
-  it("includes inbox and energies", () => {
+describe("buildResponseView", () => {
+  it("includes the inbox passed in", () => {
     const s = stateAt(2, [], baseConfig());
-    const v = buildView(s, "A2");
+    const v = buildResponseView(s, "A2", [
+      { from: "A1", round: 2, message: "hi" },
+    ]);
+    expect(v.phase).toBe("response");
+    expect(v.inbox).toEqual([{ from: "A1", round: 2, message: "hi" }]);
+  });
+
+  it("shares base fields with decision view", () => {
+    const v = buildResponseView(stateAt(5, [], baseConfig()), "A2", []);
     expect(v.agent_id).toBe("A2");
-    expect(v.round).toBe(2);
+    expect(v.round).toBe(5);
     expect(v.self_energy).toBe(6);
     expect(v.all_energies).toEqual({ A1: 8, A2: 6, A3: 5 });
-    expect(v.inbox.length).toBe(1);
-    expect(v.inbox[0]!.from).toBe("A1");
   });
 });
 

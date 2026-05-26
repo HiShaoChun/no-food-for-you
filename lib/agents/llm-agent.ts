@@ -1,9 +1,19 @@
 import type OpenAI from "openai";
-import type { AgentDecisionResult, AgentRuntime, AgentView } from "@/lib/engine/types";
+import type {
+  AgentRuntime,
+  DecisionResult,
+  DecisionView,
+  ResponseResult,
+  ResponseView,
+} from "@/lib/engine/types";
 import { getClient } from "@/lib/llm/client";
 import { getModel, type ModelKey } from "@/lib/llm/providers";
-import { buildPrompt } from "./prompt-template";
-import { parseAgentResponse } from "./parse";
+import { buildDecisionPrompt, buildResponsePrompt } from "./prompt-template";
+import {
+  parseDecisionAction,
+  parseResponseAction,
+  type ParseContext,
+} from "./parse";
 
 export type LlmAgentOptions = {
   id: string;
@@ -11,7 +21,6 @@ export type LlmAgentOptions = {
   shared_system_prompt: string;
   temperature?: number;
   max_tokens?: number;
-  // Allow injecting a client for testing
   client?: OpenAI;
 };
 
@@ -20,11 +29,6 @@ type ChatMessageWithReasoning = {
   reasoning_content?: string | null;
 };
 
-/**
- * Some Chinese reasoning models (doubao-seed, deepseek-r1-style) put the
- * actual answer in `reasoning_content` and leave `content` empty, or vice versa.
- * Try both and prefer whatever parses successfully.
- */
 function extractRawText(message: unknown): {
   text: string;
   source: "content" | "reasoning_content" | "both" | "none";
@@ -83,6 +87,19 @@ async function callOnce(
   };
 }
 
+function annotateRaw(r: CallResult, useResponseFormat: boolean): string {
+  if (r.raw.length > 0) return r.raw;
+  return `[diag] content empty, source=${r.parse_source}, finish=${r.finish_reason ?? "?"}, response_format=${useResponseFormat}\n---\n${r.raw}`;
+}
+
+function buildParseContext(view: DecisionView | ResponseView): ParseContext {
+  const alive = new Set<string>();
+  for (const [id, e] of Object.entries(view.all_energies)) {
+    if (e > 0) alive.add(id);
+  }
+  return { self_id: view.agent_id, alive_ids: alive };
+}
+
 export function makeLlmAgent(opts: LlmAgentOptions): AgentRuntime {
   const { id, model_key, shared_system_prompt } = opts;
   const model = getModel(model_key);
@@ -90,46 +107,70 @@ export function makeLlmAgent(opts: LlmAgentOptions): AgentRuntime {
   const temperature = opts.temperature ?? 0.7;
   const max_tokens = opts.max_tokens ?? 2048;
 
+  async function callPhase(prompt: string): Promise<CallResult> {
+    try {
+      return await callOnce(client, model.modelId, prompt, temperature, max_tokens, true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("response_format") || msg.includes("400")) {
+        return await callOnce(client, model.modelId, prompt, temperature, max_tokens, false);
+      }
+      throw e;
+    }
+  }
+
   return {
     id,
-    decide: async (view: AgentView): Promise<AgentDecisionResult> => {
-      const prompt = buildPrompt(view, shared_system_prompt);
-
-      const attempt = async (useResponseFormat: boolean): Promise<AgentDecisionResult> => {
-        const r = await callOnce(client, model.modelId, prompt, temperature, max_tokens, useResponseFormat);
-        const parsed = parseAgentResponse(r.raw);
-        // Annotate raw with diagnostic suffix to surface in JSONL/UI
-        const diagnosticPrefix =
-          r.raw.length === 0
-            ? `[diag] content empty, source=${r.parse_source}, finish=${r.finish_reason ?? "?"}, response_format=${useResponseFormat}`
-            : "";
-        const annotatedRaw = diagnosticPrefix
-          ? `${diagnosticPrefix}\n---\n${r.raw}`
-          : r.raw;
-
-        if (parsed.ok) {
-          return r.tokens !== undefined
-            ? { raw: annotatedRaw, parsed: parsed.action, tokens: r.tokens }
-            : { raw: annotatedRaw, parsed: parsed.action };
-        }
-        return r.tokens !== undefined
-          ? { raw: annotatedRaw, parsed: null, parse_error: parsed.error, tokens: r.tokens }
-          : { raw: annotatedRaw, parsed: null, parse_error: parsed.error };
-      };
-
+    decide_phase: async (view: DecisionView): Promise<DecisionResult> => {
+      const prompt = buildDecisionPrompt(view, shared_system_prompt);
       try {
-        return await attempt(true);
+        const r = await callPhase(prompt);
+        const ctx = buildParseContext(view);
+        const parsed = parseDecisionAction(r.raw, ctx);
+        const raw = annotateRaw(r, true);
+        if (parsed.ok) {
+          return {
+            raw,
+            parsed: parsed.action,
+            ...(r.tokens !== undefined ? { tokens: r.tokens } : {}),
+            ...(parsed.policy_truncated ? { policy_truncated: true } : {}),
+          };
+        }
+        return {
+          raw,
+          parsed: null,
+          parse_error: parsed.error,
+          ...(r.tokens !== undefined ? { tokens: r.tokens } : {}),
+        };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        // Ark/older models may reject response_format=json_object → retry without it
-        if (msg.includes("response_format") || msg.includes("400")) {
-          try {
-            return await attempt(false);
-          } catch (e2) {
-            const m2 = e2 instanceof Error ? e2.message : String(e2);
-            return { raw: "", parsed: null, parse_error: `llm_error: ${m2}` };
-          }
+        return { raw: "", parsed: null, parse_error: `llm_error: ${msg}` };
+      }
+    },
+
+    respond_phase: async (view: ResponseView): Promise<ResponseResult> => {
+      const prompt = buildResponsePrompt(view, shared_system_prompt);
+      try {
+        const r = await callPhase(prompt);
+        const ctx = buildParseContext(view);
+        const parsed = parseResponseAction(r.raw, ctx);
+        const raw = annotateRaw(r, true);
+        if (parsed.ok) {
+          return {
+            raw,
+            parsed: parsed.action,
+            ...(r.tokens !== undefined ? { tokens: r.tokens } : {}),
+            ...(parsed.policy_truncated ? { policy_truncated: true } : {}),
+          };
         }
+        return {
+          raw,
+          parsed: null,
+          parse_error: parsed.error,
+          ...(r.tokens !== undefined ? { tokens: r.tokens } : {}),
+        };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         return { raw: "", parsed: null, parse_error: `llm_error: ${msg}` };
       }
     },

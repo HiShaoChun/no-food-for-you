@@ -28,6 +28,20 @@ const AllocationPolicySchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("proportional") }),
 ]);
 
+export const DEFAULT_BETRAYAL_BONUS_TABLE: readonly number[] = [3, 1, 0, -2];
+
+const PledgesConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    betrayal_bonus_table: z.array(z.number().int()).min(1),
+    keep_promise_bonus: z.number().int().nonnegative(),
+  })
+  .default({
+    enabled: true,
+    betrayal_bonus_table: [...DEFAULT_BETRAYAL_BONUS_TABLE],
+    keep_promise_bonus: 0,
+  });
+
 export const GameConfigSchema = z.object({
   agents: z.array(AgentInstanceSchema).min(2).max(10),
   shared_system_prompt: z.string().min(1),
@@ -36,6 +50,7 @@ export const GameConfigSchema = z.object({
   pressure: PressureCurveSchema,
   allocation_policy: AllocationPolicySchema,
   master_seed: z.number().int(),
+  pledges: PledgesConfigSchema,
 });
 
 export type ValidatedGameConfig = z.infer<typeof GameConfigSchema>;

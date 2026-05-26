@@ -712,17 +712,37 @@ textarea:focus {
 /* ─── Arena (main panel) ─────────────────────────────── */
 .arena {
   display: grid;
-  grid-template-rows: 300px 1fr 44px;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-rows: 300px minmax(0, 1fr) 44px;
+  grid-template-areas:
+    "chart   chart"
+    "bubbles side"
+    "footer  footer";
   overflow: hidden;
   min-width: 0;
   background: var(--bg-elevated);
 }
 
 .chart-wrap {
+  grid-area: chart;
   border-bottom: 1px solid var(--border);
   padding: 14px 16px 10px;
   background: var(--bg-elevated);
   position: relative;
+}
+
+.arena .bubbles {
+  grid-area: bubbles;
+}
+
+.arena-side {
+  grid-area: side;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.arena .footer {
+  grid-area: footer;
 }
 
 .chart-wrap::before {
@@ -2092,4 +2112,272 @@ textarea:focus {
 .recharts-legend-item-text {
   color: var(--text-dim) !important;
   font-size: var(--fs-sm);
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Pledge & defection UI (add-pledge-betrayal)
+ * ────────────────────────────────────────────────────────── */
+
+.chip.phase {
+  background: var(--surface-2, #2a2a35);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.pledge-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pledge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(155, 102, 220, 0.12);
+  color: #d4b2ff;
+  border: 1px solid rgba(155, 102, 220, 0.35);
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pledge-chip .pledge-icon {
+  color: #b388f7;
+  font-size: 12px;
+}
+
+.pledge-chip .amount {
+  font-family: var(--font-mono);
+  background: rgba(155, 102, 220, 0.18);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+.pledge-chip .due {
+  font-family: var(--font-mono);
+  color: rgba(212, 178, 255, 0.75);
+  font-size: 10px;
+}
+
+.inner-thought {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid var(--text-faint);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-style: italic;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.inner-thought-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  font-style: normal;
+  color: var(--text-faint);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.inner-thought-text {
+  flex: 1;
+}
+
+.settle-pledges-settled,
+.settle-pledges-made {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.pledges-settled-list,
+.pledges-made-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.pledge-settled-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: var(--radius-pill);
+  padding: 3px 9px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+}
+
+.pledge-settled-chip.kept {
+  background: rgba(89, 196, 122, 0.12);
+  color: #8be9a8;
+  border-color: rgba(89, 196, 122, 0.35);
+}
+
+.pledge-settled-chip.defected {
+  background: rgba(255, 99, 99, 0.12);
+  color: #ff9c9c;
+  border-color: rgba(255, 99, 99, 0.4);
+}
+
+.pledge-settled-chip .status-label {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+
+.pledge-settled-chip .pledge-counts,
+.defection-counts {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.pledge-settled-chip .pledge-bonus,
+.defection-bonus {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.defection-bonus.pos {
+  color: #ff9c9c;
+}
+.defection-bonus.neg {
+  color: #8be9a8;
+}
+
+/* Side panels (public pledges + defection ledger) */
+.arena-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  overflow-y: auto;
+  min-width: 240px;
+}
+
+.side-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.side-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.side-panel-title {
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.side-panel-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+}
+
+.side-panel-empty {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: var(--fs-xs);
+  text-align: center;
+  padding: 8px 0;
+}
+
+.side-panel-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pledge-row,
+.defection-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 6px;
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.pledge-row .amount {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  background: rgba(155, 102, 220, 0.15);
+  color: #d4b2ff;
+  padding: 0 5px;
+  border-radius: 4px;
+}
+
+.pledge-row .due {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.defection-row .round-tag {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #ff9c9c;
+  font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 99, 99, 0.3);
+  border-radius: 4px;
+}
+
+.defection-row .defection-counts {
+  margin-left: auto;
+}
+
+/* Researcher-view toggle on chart toolbar */
+.arena-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 12px;
+}
+
+.researcher-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.researcher-toggle input {
+  cursor: pointer;
 }

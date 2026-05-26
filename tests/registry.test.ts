@@ -91,6 +91,7 @@ describe("integration — full sim writes valid JSONL", () => {
       pressure: { type: "constant", amount: 1 },
       allocation_policy: { type: "fully_free" },
       master_seed: 7,
+      pledges: { enabled: true, betrayal_bonus_table: [3, 1, 0, -2], keep_promise_bonus: 0 },
     };
   }
 

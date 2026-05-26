@@ -183,6 +183,76 @@ export function RoundSettleCard({
           </div>
         </div>
       )}
+
+      {Array.isArray(event.pledges_settled_this_round) && event.pledges_settled_this_round.length > 0 && (
+        <div className="settle-pledges-settled">
+          <span className="settle-transfers-label">承诺结算</span>
+          <div className="pledges-settled-list">
+            {event.pledges_settled_this_round.map((s, i) => {
+              const isKept = s.status === "kept";
+              const bonusLabel = isKept
+                ? s.bonus_paid > 0
+                  ? `奖励 +${s.bonus_paid}`
+                  : ""
+                : `红利 ${s.bonus_paid >= 0 ? "+" : ""}${s.bonus_paid}`;
+              return (
+                <span
+                  key={i}
+                  className={`pledge-settled-chip ${isKept ? "kept" : "defected"}`}
+                  title={`${nameOf(agents, s.from)} → ${nameOf(agents, s.to)}：承诺 ${s.pledged} / 实给 ${s.actual}${bonusLabel ? ` · ${bonusLabel}` : ""}`}
+                >
+                  <span className="status-label">{isKept ? "守约" : "背叛"}</span>
+                  <span
+                    className="transfer-dot"
+                    style={{ background: agentColor(agents, s.from) }}
+                    aria-hidden
+                  />
+                  <span>{nameOf(agents, s.from)}</span>
+                  <span className="arrow">→</span>
+                  <span
+                    className="transfer-dot"
+                    style={{ background: agentColor(agents, s.to) }}
+                    aria-hidden
+                  />
+                  <span>{nameOf(agents, s.to)}</span>
+                  <span className="pledge-counts">
+                    {s.actual}/{s.pledged}
+                  </span>
+                  {bonusLabel && <span className="pledge-bonus">{bonusLabel}</span>}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {Array.isArray(event.pledges_made_this_round) && event.pledges_made_this_round.length > 0 && (
+        <div className="settle-pledges-made">
+          <span className="settle-transfers-label">新承诺</span>
+          <div className="pledges-made-list">
+            {event.pledges_made_this_round.map((p, i) => (
+              <span key={i} className="pledge-chip">
+                <span className="pledge-icon" aria-hidden>◆</span>
+                <span
+                  className="transfer-dot"
+                  style={{ background: agentColor(agents, p.from) }}
+                  aria-hidden
+                />
+                <span>{nameOf(agents, p.from)}</span>
+                <span className="arrow">→</span>
+                <span
+                  className="transfer-dot"
+                  style={{ background: agentColor(agents, p.to) }}
+                  aria-hidden
+                />
+                <span>{nameOf(agents, p.to)}</span>
+                <span className="amount">{p.amount}</span>
+                <span className="due">R{p.due_round}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

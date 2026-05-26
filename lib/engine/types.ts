@@ -1,4 +1,5 @@
 import type { ModelKey } from "@/lib/llm/providers";
+import type { DefectionRecord, Pledge, PledgeSettlement } from "./pledge";
 
 // ───── Config ─────
 
@@ -18,6 +19,12 @@ export type AllocationPolicy =
   | { type: "capped"; cap: number }
   | { type: "proportional" };
 
+export type PledgesConfig = {
+  enabled: boolean;
+  betrayal_bonus_table: number[];
+  keep_promise_bonus: number;
+};
+
 export type GameConfig = {
   agents: AgentInstance[];
   shared_system_prompt: string;
@@ -26,15 +33,10 @@ export type GameConfig = {
   pressure: PressureCurve;
   allocation_policy: AllocationPolicy;
   master_seed: number;
+  pledges: PledgesConfig;
 };
 
-// ───── Actions (what an agent returns each round) ─────
-
-export type RequestAction = {
-  action: "request";
-  target: string;
-  message: string;
-};
+// ───── Allocation (shared by response action & policy layer) ─────
 
 export type Allocation = {
   to: string;
@@ -42,18 +44,32 @@ export type Allocation = {
   reason?: string;
 };
 
-export type RespondAction = {
-  action: "respond";
+// ───── Pledge payload from agent (engine injects from/round_made/due_round) ─────
+
+export type PledgeRequest = {
+  to: string;
+  amount: number;
+};
+
+// ───── Phase actions ─────
+
+export type DecisionAction = {
+  phase: "decision";
+  requests: { target: string; message: string }[];
+  pledges: PledgeRequest[];
+  inner_thought: string;
+};
+
+export type ResponseAction = {
+  phase: "response";
   allocations: Allocation[];
+  pledges: PledgeRequest[];
+  inner_thought: string;
 };
 
-export type NoopAction = {
-  action: "noop";
-};
+export type PhaseAction = DecisionAction | ResponseAction;
 
-export type AgentAction = RequestAction | RespondAction | NoopAction;
-
-// ───── Inbox message (carried into next round) ─────
+// ───── Inbox message (delivered to response phase of same round) ─────
 
 export type InboxMessage = {
   from: string;
@@ -61,18 +77,31 @@ export type InboxMessage = {
   message: string;
 };
 
-// ───── Per-round view (what an agent sees before deciding) ─────
+// ───── Per-agent views (phase-specific) ─────
 
-export type AgentView = {
+export type AgentViewBase = {
   agent_id: string;
   round: number;
   max_rounds: number;
   self_energy: number;
   all_energies: Record<string, number>;
-  inbox: InboxMessage[];
-  history: HistoryEntry[]; // full history of public events
-  pressure_description: string; // human-readable for prompt
+  history: HistoryEntry[];
+  pressure_description: string;
+  public_pledges: Pledge[];
+  pending_pledges: Pledge[];
+  recent_defections: DefectionRecord[];
 };
+
+export type DecisionView = AgentViewBase & {
+  phase: "decision";
+};
+
+export type ResponseView = AgentViewBase & {
+  phase: "response";
+  inbox: InboxMessage[];
+};
+
+export type AgentView = DecisionView | ResponseView;
 
 export type HistoryEntry = {
   round: number;
@@ -90,39 +119,100 @@ export type GameState = {
   round: number; // next round to run (starts at 1)
   energies: Record<string, number>;
   eliminated: Set<string>;
-  inboxes: Record<string, InboxMessage[]>; // pending requests delivered next round
   history: HistoryEntry[]; // append-only history of public events
+  public_pledges: Pledge[]; // active pledges (not yet settled)
+  recent_defections: DefectionRecord[]; // append-only ledger
   rng: () => number; // seeded PRNG
 };
 
+// ───── Legacy single-action union ─────
+// RETAINED only so older JSONL files (pre-pledge change) can still be
+// deserialized by the UI's event renderer. New simulations never produce these.
+
+/** @deprecated Use DecisionAction/ResponseAction. Kept for replay of legacy JSONL only. */
+export type LegacyRequestAction = {
+  action: "request";
+  target: string;
+  message: string;
+};
+
+/** @deprecated */
+export type LegacyRespondAction = {
+  action: "respond";
+  allocations: Allocation[];
+};
+
+/** @deprecated */
+export type LegacyNoopAction = {
+  action: "noop";
+};
+
+/** @deprecated */
+export type AgentAction = LegacyRequestAction | LegacyRespondAction | LegacyNoopAction;
+
 // ───── Events (what gets emitted to SSE/JSONL) ─────
+
+export type RoundSettledEvent = {
+  type: "round_settled";
+  sim_id: string;
+  round: number;
+  prev_energies: Record<string, number>;
+  energies: Record<string, number>;
+  transfers: Array<{ from: string; to: string; amount: number; reason?: string }>;
+  pressure_cost: number;
+  eliminated: string[];
+  pledges_made_this_round: Pledge[];
+  pledges_settled_this_round: PledgeSettlement[];
+  t: string;
+};
+
+export type AgentDecisionPhaseEvent = {
+  type: "agent_decision_phase";
+  sim_id: string;
+  round: number;
+  agent: string;
+  raw: string;
+  parsed: DecisionAction | null;
+  parse_error?: string;
+  policy_truncated?: boolean;
+  tokens?: { input: number; output: number };
+  t: string;
+};
+
+export type AgentResponsePhaseEvent = {
+  type: "agent_response_phase";
+  sim_id: string;
+  round: number;
+  agent: string;
+  raw: string;
+  parsed: ResponseAction | null;
+  parse_error?: string;
+  policy_truncated?: boolean;
+  tokens?: { input: number; output: number };
+  t: string;
+};
+
+/** @deprecated Emitted by older sims only; UI may receive this when replaying legacy JSONL. */
+export type LegacyAgentDecisionEvent = {
+  type: "agent_decision";
+  sim_id: string;
+  round: number;
+  agent: string;
+  raw: string;
+  parsed: AgentAction | null;
+  parse_error?: string;
+  policy_truncated?: boolean;
+  tokens?: { input: number; output: number };
+  t: string;
+};
 
 export type SimEvent =
   | { type: "sim_started"; sim_id: string; config: GameConfig; t: string }
   | { type: "round_started"; sim_id: string; round: number; t: string }
-  | {
-      type: "agent_decision";
-      sim_id: string;
-      round: number;
-      agent: string;
-      raw: string;
-      parsed: AgentAction | null;
-      parse_error?: string;
-      policy_truncated?: boolean;
-      tokens?: { input: number; output: number };
-      t: string;
-    }
-  | {
-      type: "round_settled";
-      sim_id: string;
-      round: number;
-      prev_energies: Record<string, number>; // round-start snapshot
-      energies: Record<string, number>; // post-settlement
-      transfers: Array<{ from: string; to: string; amount: number; reason?: string }>; // policy-applied
-      pressure_cost: number; // maintenance fee deducted from each living agent
-      eliminated: string[]; // newly eliminated this round
-      t: string;
-    }
+  | AgentDecisionPhaseEvent
+  | AgentResponsePhaseEvent
+  | LegacyAgentDecisionEvent
+  | RoundSettledEvent
   | {
       type: "sim_ended";
       sim_id: string;
@@ -133,16 +223,24 @@ export type SimEvent =
 
 export type EventType = SimEvent["type"];
 
-// ───── Round runner inputs ─────
+// ───── Agent runtime contract (two-phase) ─────
 
-export type AgentDecisionResult = {
+export type PhaseResult<P extends PhaseAction> = {
   raw: string;
-  parsed: AgentAction | null;
+  parsed: P | null;
   parse_error?: string;
+  policy_truncated?: boolean;
   tokens?: { input: number; output: number };
 };
 
+export type DecisionResult = PhaseResult<DecisionAction>;
+export type ResponseResult = PhaseResult<ResponseAction>;
+
 export type AgentRuntime = {
   id: string;
-  decide: (view: AgentView) => Promise<AgentDecisionResult>;
+  decide_phase: (view: DecisionView) => Promise<DecisionResult>;
+  respond_phase: (view: ResponseView) => Promise<ResponseResult>;
 };
+
+// Re-export pledge module types for convenience
+export type { Pledge, DefectionRecord, PledgeSettlement } from "./pledge";

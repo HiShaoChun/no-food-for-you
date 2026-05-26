@@ -1,6 +1,6 @@
-# simulation-engine
+# simulation-engine — spec delta
 
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Round-based State Machine
 The system SHALL run simulations as a sequence of discrete rounds. Each round SHALL execute the following phases in order, with no concurrent side effects across rounds.
@@ -11,7 +11,7 @@ Phases (per round):
 3. **Request aggregation** — collect all `requests` from this round's decisions and route them into the same round's inboxes (synchronous consumption, not next-round)
 4. **Response state broadcast** — build a per-agent `ResponseView` containing everything in DecisionView PLUS this round's inbox
 5. **Response LLM call** — each living agent produces a `ResponseAction` (`{allocations, pledges, inner_thought}`); MAY execute in parallel
-6. **Pledge settlement** — add new pledges to `public_pledges` (with `due_round = state.round + 1`); settle pending pledges by comparing actual policy-truncated transfers against pledged amounts; compute betrayal bonuses and apply to defector energies; apply keep-promise bonuses to receivers if enabled; drop settled pending pledges
+6. **Pledge settlement** — (a) add all new pledges (decision + response) to `public_pledges` with `due_round = state.round + 1`; (b) settle pending pledges (those whose `due_round === state.round`) by comparing actual policy-truncated transfers against pledged amounts; (c) compute betrayal bonuses and apply to defector energies; (d) compute keep-promise bonuses and apply to receiver energies if enabled; (e) drop settled pending pledges from the ledger
 7. **Round settle** — apply transfers (policy-truncated), deduct pressure cost, mark eliminations, emit `round_settled` event
 
 #### Scenario: Phases execute in order
@@ -29,100 +29,6 @@ Phases (per round):
 - **THEN** A2's `ResponseView.inbox` for round N SHALL contain that request
 - **AND** A2's response phase output MAY allocate energy in reply within the same round N
 
-#### Scenario: No cross-round concurrency
-- **WHEN** round N is executing
-- **THEN** no state mutation for round N+1 SHALL occur until round N's settlement completes
-
-### Requirement: Deterministic RNG
-The system SHALL inject all randomness through a seeded PRNG. Direct use of `Math.random()` or any unseeded global RNG is forbidden in engine code.
-
-#### Scenario: Same seed produces identical sequence
-- **WHEN** two simulations are started with identical `GameConfig` and identical `master_seed`
-- **AND** all agents are stub agents producing deterministic outputs
-- **THEN** the resulting JSONL event streams SHALL be byte-identical
-
-#### Scenario: RNG used for request delivery ordering
-- **WHEN** multiple `Request` actions target the same agent in one round
-- **THEN** their order in the target's inbox SHALL be determined by the seeded RNG
-- **AND** the order SHALL NOT depend on agent decision wall-clock latency
-
-### Requirement: Integer Energy Invariant
-The system SHALL store and transfer energy only as integers. No fractional energy SHALL exist in any persisted state.
-
-#### Scenario: Allocation amounts are integers
-- **WHEN** an agent produces a `Respond` action
-- **THEN** every `allocations[i].amount` SHALL be a positive integer
-- **AND** a non-integer amount SHALL cause that allocation entry to be dropped and a `parse_error` event emitted
-
-### Requirement: Pressure Curve
-The system SHALL deduct a per-round maintenance cost from each living agent at settlement, computed from the configured pressure curve.
-
-#### Scenario: Constant pressure
-- **WHEN** `pressure.type === "constant"` with `amount = 1`
-- **THEN** every living agent's energy SHALL decrease by 1 at each settlement
-
-#### Scenario: Linear pressure
-- **WHEN** `pressure.type === "linear"` with `start = 1`, `step = 1`
-- **THEN** at round t (1-indexed), each living agent SHALL lose `start + step * (t - 1)` energy at settlement
-
-#### Scenario: Step pressure
-- **WHEN** `pressure.type === "step"` with `thresholds = [10, 20]`
-- **THEN** rounds 1–10 SHALL cost 1, rounds 11–20 SHALL cost 2, rounds 21+ SHALL cost 3
-
-### Requirement: Allocation Policies
-The system SHALL enforce one of three allocation policies on each `Respond` action.
-
-#### Scenario: fully_free policy
-- **WHEN** `allocation_policy.type === "fully_free"`
-- **THEN** the only constraint SHALL be that the sum of allocated amounts ≤ the responder's current energy
-
-#### Scenario: capped policy
-- **WHEN** `allocation_policy.type === "capped"` with `cap = 5`
-- **THEN** the sum of allocated amounts in a single response SHALL NOT exceed 5
-- **AND** if the agent returns a sum > 5, the engine SHALL proportionally scale down each amount to fit and emit a `policy_truncated` flag in the decision event
-
-#### Scenario: proportional policy
-- **WHEN** `allocation_policy.type === "proportional"` AND the responder received N requests
-- **THEN** the engine SHALL ignore agent-supplied `amount` values in `Respond` actions
-- **AND** SHALL instead distribute `min(self_energy, sum_of_requested_amounts)` across requesters proportional to each request's `amount`
-
-### Requirement: Elimination Rule
-The system SHALL mark an agent as eliminated at settlement if and only if its energy drops to ≤ 0 after that round's transfers and pressure deduction.
-
-#### Scenario: Energy hits zero
-- **WHEN** an agent's energy reaches exactly 0 after settlement
-- **THEN** the agent SHALL be eliminated
-- **AND** SHALL NOT participate in subsequent rounds
-- **AND** SHALL NOT receive incoming allocations after elimination
-
-#### Scenario: Transient negative resolved within round
-- **WHEN** an agent's intermediate balance goes negative during a single round's calculations
-- **AND** transfers within the same round bring it back to ≥ 1 before settlement check
-- **THEN** the agent SHALL survive
-  - (Note: this scenario is theoretical because settlement runs once at end-of-round, but the rule is stated for completeness)
-
-### Requirement: Termination Conditions
-The system SHALL end a simulation when any of the following occur. The ended state SHALL emit a `sim_ended` event with the matching reason.
-
-#### Scenario: Reached max_rounds
-- **WHEN** round `max_rounds` settles
-- **THEN** the simulation SHALL terminate with reason `"max_rounds"`
-
-#### Scenario: All agents eliminated
-- **WHEN** settlement leaves zero living agents
-- **THEN** the simulation SHALL terminate with reason `"all_eliminated"`
-
-#### Scenario: Single survivor
-- **WHEN** settlement leaves exactly one living agent
-- **THEN** the simulation SHALL terminate with reason `"one_survivor"`
-
-### Requirement: Engine is Stateless Across Simulations
-The engine SHALL NOT share mutable state between distinct simulations. Each `runSimulation` call SHALL operate on its own `GameState` instance.
-
-#### Scenario: Concurrent simulations are independent
-- **WHEN** two simulations run concurrently with the same `master_seed`
-- **THEN** their outputs SHALL be identical to each running in isolation
-
 ### Requirement: Round Settlement Emits Reconcilable Detail
 The system SHALL emit a `round_settled` event at the end of every round that contains sufficient detail for a frontend to reconstruct the round's outcome WITHOUT replaying decisions.
 
@@ -130,14 +36,18 @@ Fields:
 - `round` — the round number that just settled
 - `prev_energies` — every registered agent's energy at round-start (before transfers, bonuses, and pressure deduction)
 - `energies` — every registered agent's energy at round-end (after settlement); eliminated agents appear at 0
-- `transfers` — array of `{ from, to, amount, reason? }` records describing every actual integer energy transfer applied this round (already truncated/scaled per allocation policy). `reason` is optional and carries the responder's stated reason for that allocation (if the agent provided one).
+- `transfers` — array of `{ from, to, amount, reason? }` records describing every actual integer energy transfer applied this round (already truncated/scaled per allocation policy). `reason` is optional.
 - `pressure_cost` — the integer maintenance fee deducted from each living agent this round
 - `eliminated` — agent IDs newly eliminated this round (not the cumulative set)
-- `pledges_made_this_round` — array of `Pledge` records (decision + response phases combined, post-validation, post-quota-truncation)
-- `pledges_settled_this_round` — array of `{ from, to, pledged, actual, status: "kept" | "defected", bonus_paid }` records. For `defected`, `bonus_paid` is the per-defector betrayal payout (same value for all entries with the same `from`); for `kept` it is `keep_promise_bonus` (0 if disabled).
+- `pledges_made_this_round` — array of `{ from, to, amount, round_made, due_round }` records describing all pledges newly created this round (decision + response phases combined, post-validation, post-quota-truncation)
+- `pledges_settled_this_round` — array of `{ from, to, pledged, actual, status: "kept" | "defected", bonus_paid }` records describing every pending pledge that matured this round. `bonus_paid` for a `defected` entry is the per-defector betrayal payout for this round (same value for all entries with the same `from`); for `kept` it is `keep_promise_bonus` paid to the receiver (0 if disabled).
 - `t` — ISO-8601 timestamp
 
-#### Scenario: Settled event includes prev_energies snapshot
+#### Scenario: Settled event includes pledge ledgers
+- **WHEN** a round settles
+- **THEN** `pledges_made_this_round` and `pledges_settled_this_round` SHALL each be arrays (possibly empty, never undefined)
+
+#### Scenario: Settled event prev_energies snapshot
 - **WHEN** a round settles
 - **THEN** `prev_energies` SHALL equal the energy map as it was at the start of this round (i.e., the `energies` field of the previous `round_settled` event, or `initial_energy` for all agents on round 1)
 
@@ -154,34 +64,21 @@ Fields:
 - **WHEN** an agent allocated `{"to":"A2","amount":3,"reason":"看你还能撑两轮"}` and the engine applied it
 - **THEN** the matching `transfers` entry SHALL include `reason: "看你还能撑两轮"`
 
-#### Scenario: Transfer without reason
-- **WHEN** an agent allocated `{"to":"A2","amount":3}` (no reason)
-- **THEN** the matching `transfers` entry SHALL NOT include a `reason` field (or SHALL have it as undefined)
-
-#### Scenario: pressure_cost reflects the configured curve at this round
-- **WHEN** `pressure.type === "linear"` with `start=1, step=1` and round is 5
-- **THEN** `pressure_cost` SHALL equal 5
-
 #### Scenario: Eliminated agent at zero appears in energies
 - **WHEN** an agent is eliminated this round
 - **THEN** `eliminated` SHALL list that agent's ID
 - **AND** `energies[<id>]` SHALL equal 0
 
-### Requirement: Settled Event Includes Pledge Ledgers
-The `round_settled` event SHALL include `pledges_made_this_round` and `pledges_settled_this_round` arrays.
-
-#### Scenario: Pledge ledgers always present
-- **WHEN** a round settles
-- **THEN** `pledges_made_this_round` and `pledges_settled_this_round` SHALL each be arrays (possibly empty, never undefined)
-
 #### Scenario: Pledges created in either phase appear in pledges_made
 - **WHEN** in round N agent A1 emits `pledges:[{to:"A2",amount:2}]` in the decision phase and A2 emits `pledges:[{to:"A1",amount:1}]` in the response phase
 - **THEN** `round_settled.pledges_made_this_round` SHALL contain both entries with `round_made: N, due_round: N+1`
 
+## ADDED Requirements
+
 ### Requirement: Pledge Lifecycle
 The system SHALL treat each pledge as a state-machine transitioning created → pending → kept | defected. The transitions SHALL be triggered exclusively by the engine, never by agents.
 
-States:
+State definitions:
 - **created**: pledge emitted by an agent (in decision or response phase); validated and added to `public_pledges` with `due_round = round_emitted + 1`. Immediately public to all agents.
 - **pending**: a pledge whose `due_round` equals the current round being settled. Listed in the pledger's `ResponseView.pending_pledges`.
 - **kept**: at pledge settlement, the actual sum of transfers from the pledger to the recipient in the maturing round was ≥ the pledged amount.
@@ -192,23 +89,23 @@ Once settled (kept or defected), the pledge SHALL be removed from `public_pledge
 #### Scenario: Newly emitted pledge appears in public ledger next round
 - **WHEN** A1 emits `pledges:[{to:"A2",amount:2}]` in round 3's decision phase
 - **THEN** `state.public_pledges` after round 3 settles SHALL contain `{from:"A1",to:"A2",amount:2,round_made:3,due_round:4}`
-- **AND** every agent's DecisionView and ResponseView in round 4 SHALL include this pledge in `public_pledges`
+- **AND** the DecisionView for every agent in round 4 SHALL include this pledge in `public_pledges`
 
-#### Scenario: Pending pledge surfaces only in pledger's pending_pledges
+#### Scenario: Pending pledge surfaces in pledger's pending_pledges
 - **WHEN** state.public_pledges contains the pledge above and round 4 begins
-- **THEN** A1's views in round 4 SHALL include that pledge in `pending_pledges`
-- **AND** no other agent's `pending_pledges` SHALL include it
+- **THEN** A1's `ResponseView.pending_pledges` for round 4 SHALL include that pledge
+- **AND** no other agent's `pending_pledges` SHALL include it (it's A1's debt)
 
 #### Scenario: Settled pledge is dropped from ledger
 - **WHEN** round 4 settles and A1's pledge is marked kept or defected
 - **THEN** `state.public_pledges` after round 4 SHALL NOT contain that pledge
 
 ### Requirement: Self and Dead-Target Pledges Are Dropped
-The system SHALL drop any pledge whose `to` equals the pledger's own id, or whose `to` is not a currently-living agent at the time of pledge emission. Pledges with non-positive or non-integer amounts SHALL also be dropped.
+The system SHALL drop any pledge whose `to` equals the pledger's own id, or whose `to` is not a currently-living agent at the time of pledge emission.
 
 #### Scenario: Self-pledge dropped
 - **WHEN** A1 emits `pledges:[{to:"A1",amount:5}]`
-- **THEN** the engine SHALL drop the pledge silently
+- **THEN** the engine SHALL drop the pledge silently (not added to public_pledges)
 
 #### Scenario: Dead-target pledge dropped
 - **WHEN** A3 was eliminated in round 2 and A1 emits `pledges:[{to:"A3",amount:1}]` in round 3
@@ -222,20 +119,21 @@ The system SHALL drop any pledge whose `to` equals the pledger's own id, or whos
 The system SHALL settle pending pledges in the round their `due_round` equals, comparing the pledged amount against the sum of actual integer transfers from the pledger to the recipient applied THIS round.
 
 #### Scenario: Actual ≥ pledged → kept
-- **WHEN** A1 pledged 2 to A2 in round 3 AND in round 4's response phase the engine applies a transfer `{from:"A1",to:"A2",amount:2}` (or more)
+- **WHEN** A1 pledged 2 to A2 in round 3 (due round 4) AND in round 4's response phase the engine applies a transfer `{from:"A1",to:"A2",amount:2}` (or more)
 - **THEN** the pledge SHALL be marked `kept`
 
 #### Scenario: Actual < pledged → defected
 - **WHEN** A1 pledged 3 to A2 in round 3 AND in round 4 the engine applies a transfer `{from:"A1",to:"A2",amount:1}`
 - **THEN** the pledge SHALL be marked `defected` with `actual=1, pledged=3`
 
-#### Scenario: No transfer → defected
+#### Scenario: No transfer at all → defected
 - **WHEN** A1 pledged 2 to A2 in round 3 AND no transfer from A1 to A2 is applied in round 4
 - **THEN** the pledge SHALL be marked `defected` with `actual=0`
 
 #### Scenario: Policy truncation can cause defection
-- **WHEN** A1 pledged 5 to A2 AND allocates `{to:"A2",amount:5}` in round 4 AND `allocation_policy=capped` with `cap=2` truncates the actual transfer to 2
+- **WHEN** A1 pledged 5 to A2, allocates `{to:"A2",amount:5}` in round 4, but `allocation_policy=capped` with `cap=2` truncates the actual transfer to 2
 - **THEN** the pledge SHALL be marked `defected` with `actual=2, pledged=5`
+- **AND** the engine SHALL NOT use the agent-declared allocation amount (5) for defection determination
 
 #### Scenario: Response phase parse failure → all pending pledges defected
 - **WHEN** A1 has pending pledges in round 4 AND A1's response phase LLM call fails or produces unparseable output
@@ -251,8 +149,8 @@ The system SHALL count the distinct number of defectors in each round and pay ea
 
 Table lookup rule:
 - N defectors this round → bonus per defector = `table[min(N - 1, table.length - 1)]`
-- Default: `table = [3, 1, 0, -2]` (1 → +3, 2 → +1, 3 → 0, 4 or more → -2)
-- Each defector receives ONE bonus per round regardless of how many of their pledges defaulted
+- Defaults: `table = [3, 1, 0, -2]` (1 → +3, 2 → +1, 3 → 0, 4 or more → -2)
+- Each defector receives ONE bonus per round regardless of how many of their pledges defaulted this round
 
 #### Scenario: Lone defector receives +3
 - **WHEN** exactly 1 agent defects this round AND table = [3,1,0,-2]
@@ -266,7 +164,7 @@ Table lookup rule:
 - **WHEN** 3 distinct agents defect this round AND table = [3,1,0,-2]
 - **THEN** no defector's energy SHALL change from the bonus
 
-#### Scenario: Four or more defectors each receive table's last entry
+#### Scenario: Four or more defectors each receive -2 (table's last entry)
 - **WHEN** 4, 5, ..., 10 distinct agents defect this round AND table = [3,1,0,-2]
 - **THEN** EACH defector SHALL lose 2 energy (the last table entry repeats for any N ≥ length)
 
@@ -275,10 +173,10 @@ Table lookup rule:
 - **THEN** A1 SHALL receive +3 ONCE (not +6)
 
 #### Scenario: Bonus may push energy into elimination
-- **WHEN** an agent has energy 1 going into bonus payout, the table value is -2, and pressure_cost is 1
+- **WHEN** an agent has energy 1 going into bonus payout, the table value is -2 (4+ defectors), and pressure_cost is 1
 - **THEN** after bonus (energy = -1) and pressure (energy = -2), the agent SHALL be eliminated
 
-#### Scenario: Disabling pledges via config bypasses all pledge logic
+#### Scenario: Betrayal bonus disabled by empty table
 - **WHEN** `config.pledges.enabled === false`
 - **THEN** no pledges SHALL be added to `public_pledges` regardless of agent output
 - **AND** no betrayal or keep-promise bonus SHALL be paid
@@ -287,12 +185,16 @@ Table lookup rule:
 The system SHALL pay the recipient of a kept pledge `config.pledges.keep_promise_bonus` energy if and only if the configured value is > 0. The bonus SHALL apply BEFORE pressure deduction.
 
 #### Scenario: Default keep_promise_bonus = 0 → no payout
-- **WHEN** the config uses `keep_promise_bonus: 0` and A1 keeps a pledge to A2
+- **WHEN** the config uses the default `keep_promise_bonus: 0` and A1 keeps a pledge to A2
 - **THEN** A2's energy SHALL NOT change from this bonus
 
 #### Scenario: keep_promise_bonus = 1 → receiver +1
 - **WHEN** `keep_promise_bonus: 1` and A1 keeps a pledge to A2
 - **THEN** A2's energy SHALL increase by 1 in this round's settlement
+
+#### Scenario: Dead receiver receives no bonus
+- **WHEN** A2 was eliminated this round (e.g., by pressure before bonus order, though spec orders bonus BEFORE pressure) — in any case the receiver must be alive at the time of bonus application
+- **THEN** no bonus SHALL be paid
 
 ### Requirement: Public Pledge Ledger and Defection Ledger
 The system SHALL maintain two ledgers in `GameState`:
@@ -306,22 +208,19 @@ Both ledgers SHALL be included in every agent's view (decision and response phas
 - **THEN** a `DefectionRecord{round_due: N, from, to, pledged, actual}` SHALL be appended to `state.recent_defections`
 - **AND** that record SHALL appear in every subsequent agent view's `recent_defections`
 
+#### Scenario: Public pledge ledger reflects only active pledges
+- **WHEN** round N settles and a pledge created in round N-1 is settled
+- **THEN** `state.public_pledges` for round N+1 SHALL NOT contain that pledge
+- **AND** any pledges created in round N that mature in round N+1 SHALL appear
+
 ### Requirement: Per-Round Per-Phase Pledge Quota
 The system SHALL truncate each agent's emitted pledges to at most 3 per phase (decision OR response). Excess SHALL be silently dropped from the tail of the array.
 
 #### Scenario: Five pledges in one phase → keep first 3
-- **WHEN** A1 emits 5 pledges in the decision phase
-- **THEN** only the first 3 SHALL be added to `public_pledges`
+- **WHEN** A1 emits `pledges:[p1,p2,p3,p4,p5]` in the decision phase
+- **THEN** only `p1, p2, p3` SHALL be added to `public_pledges`
 - **AND** the `agent_decision_phase` event SHALL include `policy_truncated: true`
 
 #### Scenario: Three in decision + three in response is allowed
 - **WHEN** A1 emits 3 pledges in decision AND 3 pledges in response
 - **THEN** all 6 SHALL be added to `public_pledges` (quota is per-phase, not per-round)
-
-### Requirement: Reason Propagates Into Subsequent Round Views
-The system SHALL include the `reason` of each transfer (if present) in the per-agent view that the next round's decision phase receives, so agents can incorporate prior allocation reasons into their reasoning.
-
-#### Scenario: Reason appears in history for next round's view
-- **WHEN** in round N agent A1 allocates `{to:"A2",amount:2,reason:"看你能撑两轮"}` (applied)
-- **AND** the simulation continues to round N+1
-- **THEN** the view passed to agents in round N+1 SHALL surface the transfer entry from round N with its reason

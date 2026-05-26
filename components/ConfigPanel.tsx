@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import type {
   AllocationPolicy,
   GameConfig,
+  PledgesConfig,
   PressureCurve,
 } from "@/lib/engine/types";
 import type { Availability } from "@/lib/llm/availability";
@@ -101,6 +103,11 @@ export function ConfigPanel({ config, availability, running, onChange, onStart }
           onChange={(v) => patch("allocation_policy", v)}
         />
       </div>
+
+      <PledgesSection
+        value={config.pledges}
+        onChange={(v) => patch("pledges", v)}
+      />
 
       <button
         className="btn start-btn"
@@ -343,6 +350,113 @@ function PressurePreview({
       ))}
       <span className="preview-sep">·</span>
       <span className="preview-chip muted">累计 −{total}</span>
+    </div>
+  );
+}
+
+function PledgesSection({
+  value,
+  onChange,
+}: {
+  value: PledgesConfig;
+  onChange: (v: PledgesConfig) => void;
+}): React.ReactElement {
+  const [open, setOpen] = useState(false);
+
+  function patchTable(idx: 0 | 1 | 2 | 3, n: number): void {
+    const table = [...value.betrayal_bonus_table];
+    while (table.length < 4) table.push(0);
+    table[idx] = Number.isFinite(n) ? Math.trunc(n) : 0;
+    onChange({ ...value, betrayal_bonus_table: table.slice(0, 4) });
+  }
+
+  // Normalize length for display
+  const t0 = value.betrayal_bonus_table[0] ?? 3;
+  const t1 = value.betrayal_bonus_table[1] ?? 1;
+  const t2 = value.betrayal_bonus_table[2] ?? 0;
+  const t3 = value.betrayal_bonus_table[3] ?? -2;
+
+  return (
+    <div className="section">
+      <h3 style={{ cursor: "pointer", userSelect: "none" }} onClick={() => setOpen((v) => !v)}>
+        <span style={{ marginRight: 6 }}>{open ? "▾" : "▸"}</span>
+        承诺与背叛
+        <span
+          className="section-hint"
+          title="agent 可发承诺；守约/背叛在下回合响应阶段结算"
+          aria-hidden
+        >
+          ⓘ
+        </span>
+      </h3>
+      <p className="section-desc">
+        关闭后 agent 的 pledge 不进入引擎，背叛红利与守约奖励均不结算。
+      </p>
+      <div className="field">
+        <label>
+          <input
+            type="checkbox"
+            checked={value.enabled}
+            onChange={(e) => onChange({ ...value, enabled: e.target.checked })}
+          />{" "}
+          启用承诺机制
+        </label>
+      </div>
+      {open && (
+        <>
+          <div className="field" style={{ marginTop: 6 }}>
+            <label title="独狼背叛时每位背叛者拿到的能量">背叛红利 — 1 人</label>
+            <input
+              type="number"
+              disabled={!value.enabled}
+              value={t0}
+              onChange={(e) => patchTable(0, parseInt(e.target.value || "0", 10))}
+            />
+          </div>
+          <div className="field">
+            <label>背叛红利 — 2 人</label>
+            <input
+              type="number"
+              disabled={!value.enabled}
+              value={t1}
+              onChange={(e) => patchTable(1, parseInt(e.target.value || "0", 10))}
+            />
+          </div>
+          <div className="field">
+            <label>背叛红利 — 3 人</label>
+            <input
+              type="number"
+              disabled={!value.enabled}
+              value={t2}
+              onChange={(e) => patchTable(2, parseInt(e.target.value || "0", 10))}
+            />
+          </div>
+          <div className="field">
+            <label title="4 人及以上都按此值算">背叛红利 — 4+ 人</label>
+            <input
+              type="number"
+              disabled={!value.enabled}
+              value={t3}
+              onChange={(e) => patchTable(3, parseInt(e.target.value || "0", 10))}
+            />
+          </div>
+          <div className="field">
+            <label title="守约时接收方获得的系统能量（正和奖励）">守约奖励</label>
+            <input
+              type="number"
+              min={0}
+              disabled={!value.enabled}
+              value={value.keep_promise_bonus}
+              onChange={(e) =>
+                onChange({
+                  ...value,
+                  keep_promise_bonus: Math.max(0, parseInt(e.target.value || "0", 10)),
+                })
+              }
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

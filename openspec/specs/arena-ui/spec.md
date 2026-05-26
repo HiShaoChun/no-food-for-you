@@ -56,6 +56,10 @@ Controls:
 - `max_rounds` — number input (default 30, min 1, max 200)
 - `pressure` — radio (constant / linear / step) + conditional parameter inputs
 - `allocation_policy` — radio (fully_free / capped / proportional) + conditional `cap` input
+- Pledges panel (collapsible, NEW):
+  - `enabled` — checkbox; default checked
+  - `betrayal_bonus_table` — 4 integer inputs labeled "1 人 / 2 人 / 3 人 / 4+ 人"; default `[3, 1, 0, -2]`
+  - `keep_promise_bonus` — non-negative integer input; default `0`
 
 The system SHALL NOT render UI controls for:
 - `master_seed` (auto-randomized on every Start; see "Auto-randomized Master Seed")
@@ -106,26 +110,32 @@ The system SHALL render a Start button that POSTs the current config to `/api/si
 - **THEN** the Start button SHALL be disabled with a tooltip explaining which check failed
 
 ### Requirement: Chat Bubble Timeline
-The system SHALL render LLM interactions as a vertically scrolling timeline of chat bubbles, grouped by round.
+The system SHALL render LLM interactions as a vertically scrolling timeline of chat bubbles, grouped by round. Each round produces TWO bubble groups per living agent: one from the `agent_decision_phase` event and one from the `agent_response_phase` event.
 
-#### Scenario: Request bubble
-- **WHEN** an `agent_decision` event arrives with `parsed.action === "request"`
-- **THEN** a bubble SHALL appear showing the source agent's display_name, the target agent's display_name, and the message text
-- **AND** the bubble SHALL be styled distinctly from response bubbles
+#### Scenario: Decision phase bubble with request and pledge
+- **WHEN** an `agent_decision_phase` event arrives with non-empty `parsed.requests` and `parsed.pledges`
+- **THEN** a bubble SHALL appear labeled "[决策]"
+- **AND** SHALL render each request line ("→ A2: 给2")
+- **AND** SHALL render a distinct **pledge chip** (purple ◆ icon) for each pledge
 
-#### Scenario: Respond bubble without reasons
-- **WHEN** an `agent_decision` event arrives with `parsed.action === "respond"` and no allocations carry a `reason`
-- **THEN** a bubble SHALL appear listing each allocation as "→ <to>: <amount>"
+#### Scenario: Response phase bubble with allocations
+- **WHEN** an `agent_response_phase` event arrives with non-empty `parsed.allocations`
+- **THEN** a bubble SHALL appear labeled "[响应]"
+- **AND** SHALL render each allocation as "→ <to>: <amount>" (with reason "· <reason>" inline if present)
 
-#### Scenario: Respond bubble with reasons
-- **WHEN** an `agent_decision` event arrives with `parsed.action === "respond"` and at least one allocation has a non-empty `reason`
-- **THEN** the bubble SHALL render each allocation with its reason inline (e.g. "→ <to>: <amount> · <reason>")
-- **AND** allocations without `reason` SHALL render normally (no trailing separator/blank)
+#### Scenario: Empty arrays render compact placeholder
+- **WHEN** a phase event has empty arrays and empty pledges
+- **THEN** the bubble SHALL render a compact gray "[决策/响应] 无动作" line
 
-#### Scenario: Noop or parse_error
-- **WHEN** an `agent_decision` event arrives with `parsed === null` or `parsed.action === "noop"`
-- **THEN** a compact gray bubble SHALL show the agent name and "无动作" (or "解析失败" if parse_error)
-- **AND** the raw LLM text SHALL be available behind a "show raw" expand toggle
+#### Scenario: Parse error rendered with raw toggle
+- **WHEN** a phase event has `parsed === null`
+- **THEN** the bubble SHALL show "解析失败" in red
+- **AND** a "show raw" expand toggle SHALL reveal the raw LLM text
+
+#### Scenario: Legacy agent_decision events still render
+- **WHEN** an older JSONL is replayed and the registry replays `agent_decision` events
+- **THEN** the UI SHALL render them using the previous single-action layout (request OR respond OR noop)
+- **AND** SHALL NOT crash on unknown event shape
 
 ### Requirement: Energy Line Chart
 The system SHALL render a line chart showing each agent's energy over rounds. The chart SHALL update incrementally as `round_settled` events arrive.
@@ -139,12 +149,20 @@ The system SHALL render a line chart showing each agent's energy over rounds. Th
 - **WHEN** an agent is eliminated at round T
 - **THEN** that agent's line SHALL terminate at (T, 0) and not extend further
 
-### Requirement: Token Meter
-The system SHALL display a running total of input/output tokens consumed across all agent calls in the current simulation.
+### Requirement: Token Meter Split by Phase
+The system SHALL display token consumption split by phase: `Decision: input/output` and `Response: input/output`. The total remains visible.
 
-#### Scenario: Token counter updates per decision
-- **WHEN** an `agent_decision` event arrives with `tokens: {input, output}`
-- **THEN** the meter SHALL increment its totals by those amounts
+#### Scenario: Decision phase increments decision counter
+- **WHEN** an `agent_decision_phase` event arrives with `tokens: {input: 100, output: 50}`
+- **THEN** the Decision row SHALL increment by 100/50 AND the Total SHALL increment by 100/50
+
+#### Scenario: Response phase increments response counter
+- **WHEN** an `agent_response_phase` event arrives with `tokens: {input: 80, output: 30}`
+- **THEN** the Response row SHALL increment by 80/30 AND the Total SHALL increment by 80/30
+
+#### Scenario: Legacy agent_decision event accumulates into Total only
+- **WHEN** an older log replays `agent_decision` events with token info
+- **THEN** the Total SHALL increment but neither Decision nor Response row SHALL change
 
 ### Requirement: SSE Reconnection
 The system SHALL automatically reconnect to the SSE endpoint if the connection drops mid-simulation, and SHALL not duplicate events already rendered.
@@ -155,13 +173,27 @@ The system SHALL automatically reconnect to the SSE endpoint if the connection d
 - **AND** SHALL deduplicate events it has already rendered, using `(sim_id, round, type, agent?)` as the dedupe key
 
 ### Requirement: Round Settle Card
-The system SHALL render a `RoundSettleCard` immediately after each `round_settled` event in the chat timeline, summarizing the round's outcome in one horizontal card.
+The system SHALL render a `RoundSettleCard` immediately after each `round_settled` event in the chat timeline, summarizing the round's outcome in one card.
 
-The card SHALL contain:
+The card SHALL contain (in order):
 - Round number badge
 - Pressure cost label (e.g., "压力 -1")
 - For each agent: a colored swatch, ID/display_name, and `prev → curr (delta)` line
-- A transfers section listing every `{ from → to: amount }` entry from the event; SHALL be omitted entirely if `transfers.length === 0`
+- A `transfers` section listing every `{ from → to: amount }` entry; SHALL be omitted entirely if `transfers.length === 0`
+- A `pledges_settled` section listing every settled pledge with status badge and bonus; SHALL be omitted if empty
+- A `pledges_made` chip row listing every new pledge this round; SHALL be omitted if empty
+
+#### Scenario: Pledges settled section shows kept and defected
+- **WHEN** `round_settled.pledges_settled_this_round` contains both kept and defected entries
+- **THEN** the card's "本回合承诺结算" section SHALL render rows with green "守约" and red "背叛" labels and the bonus_paid value
+
+#### Scenario: Pledges made chip row
+- **WHEN** `round_settled.pledges_made_this_round` has entries
+- **THEN** the card SHALL render a horizontal chip row labeled "本回合新承诺"
+
+#### Scenario: All pledge sections empty
+- **WHEN** both `pledges_settled_this_round` and `pledges_made_this_round` are empty
+- **THEN** neither pledge section SHALL render
 
 #### Scenario: Card renders all agents with delta
 - **WHEN** a `round_settled` event arrives with `prev_energies: {A1: 9, A2: 9}` and `energies: {A1: 8, A2: 10}`
@@ -223,3 +255,41 @@ The card SHALL contain:
 #### Scenario: Single-survivor scenario
 - **WHEN** the sim ends with `reason: "one_survivor"`
 - **THEN** the header SHALL include a small "👑 幸存者: <display_name>" line
+
+### Requirement: Public Pledges Panel
+The system SHALL render a `PublicPledgesPanel` in the Arena's side area showing all currently active pledges in real time. The panel SHALL update on every `round_settled` event by re-deriving the active set from `pledges_made_this_round` minus historical `pledges_settled_this_round`.
+
+#### Scenario: New pledge appears immediately
+- **WHEN** a `round_settled` event for round 3 contains `pledges_made_this_round: [{from:"A1",to:"A2",amount:2,round_made:3,due_round:4}]`
+- **THEN** the panel SHALL display "A1 → A2: 2 (R4 到期)" after that event is processed
+
+#### Scenario: Settled pledge disappears
+- **WHEN** a subsequent `round_settled` event for round 4 contains that pledge in `pledges_settled_this_round`
+- **THEN** the panel SHALL NOT show that pledge after processing round 4's event
+
+#### Scenario: Empty state
+- **WHEN** no active pledges exist
+- **THEN** the panel SHALL show "（暂无公开承诺）" muted text
+
+### Requirement: Defection Ledger Panel
+The system SHALL render a `DefectionLedger` in the Arena's side area showing every defection that has occurred this simulation, newest first.
+
+#### Scenario: Defection appears immediately
+- **WHEN** a `round_settled` event for round 4 contains `pledges_settled_this_round` with `status: "defected"`
+- **THEN** the ledger SHALL prepend an entry showing round / from / to / pledged-vs-actual / bonus_paid
+
+#### Scenario: Empty state
+- **WHEN** no defections yet
+- **THEN** the panel SHALL show "（暂无背叛记录）" muted text
+
+### Requirement: Inner Thought Researcher Toggle
+The system SHALL render a "研究者视角" toggle in the Arena header. The toggle SHALL default to OFF. When ON, every chat bubble SHALL render the producing agent's `inner_thought` text as a small, italic, muted-grey card directly below the bubble's main content. When OFF, no `inner_thought` text SHALL be visible anywhere in the UI.
+
+#### Scenario: Toggle off → no inner thought visible
+- **WHEN** the toggle is OFF
+- **THEN** no DOM element SHALL contain any agent's `inner_thought` text
+
+#### Scenario: Toggle on → inner thought below each bubble
+- **WHEN** the toggle is flipped to ON
+- **THEN** each bubble whose `parsed.inner_thought` is non-empty SHALL render an additional muted-grey italic card containing that text
+- **AND** bubbles with empty inner thought SHALL render nothing extra

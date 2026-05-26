@@ -1,34 +1,44 @@
-import type { AgentAction } from "@/lib/engine/types";
+import type {
+  AgentAction,
+  DecisionAction,
+  PledgeRequest,
+  ResponseAction,
+} from "@/lib/engine/types";
 
-export type ParseResult =
-  | { ok: true; action: AgentAction }
+export const MAX_PLEDGES_PER_PHASE = 3;
+export const MAX_REQUESTS_PER_PHASE = 3;
+
+export type ParseContext = {
+  self_id: string;
+  alive_ids: ReadonlySet<string>;
+};
+
+export type DecisionParseResult =
+  | { ok: true; action: DecisionAction; policy_truncated?: boolean }
+  | { ok: false; error: string };
+
+export type ResponseParseResult =
+  | { ok: true; action: ResponseAction; policy_truncated?: boolean }
   | { ok: false; error: string };
 
 /**
- * Strip markdown code fences ( ```json ... ``` or ``` ... ``` ) and try to JSON.parse.
- * Then validate the shape matches one of the three action variants.
+ * Strip markdown code fences ( ```json ... ``` or ``` ... ``` ) and try to JSON.parse
+ * the FIRST balanced {...} block found in the text.
  */
-export function parseAgentResponse(raw: string): ParseResult {
+function extractJsonObject(raw: string): { ok: true; obj: unknown } | { ok: false; error: string } {
   const cleaned = stripCodeFence(raw).trim();
   if (cleaned.length === 0) return { ok: false, error: "empty_response" };
-
-  // Some models wrap a JSON object inside prose. Try to find the first {...} block.
   const jsonText = extractFirstJsonObject(cleaned);
   if (jsonText === null) return { ok: false, error: "no_json_found" };
-
-  let obj: unknown;
   try {
-    obj = JSON.parse(jsonText);
+    return { ok: true, obj: JSON.parse(jsonText) };
   } catch (e) {
     return { ok: false, error: `json_parse_failed: ${(e as Error).message}` };
   }
-
-  return validateAction(obj);
 }
 
 function stripCodeFence(raw: string): string {
   const trimmed = raw.trim();
-  // ```json\n...\n``` or ```\n...\n```
   const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```$/m;
   const m = fence.exec(trimmed);
   if (m && m[1] !== undefined) return m[1];
@@ -62,26 +72,154 @@ function extractFirstJsonObject(text: string): string | null {
   return null;
 }
 
-function validateAction(obj: unknown): ParseResult {
-  if (typeof obj !== "object" || obj === null) {
+function asString(v: unknown): string | null {
+  return typeof v === "string" ? v : null;
+}
+
+function validatePledgeArray(
+  raw: unknown,
+  ctx: ParseContext,
+): { pledges: PledgeRequest[]; truncated: boolean } {
+  if (!Array.isArray(raw)) return { pledges: [], truncated: false };
+  const out: PledgeRequest[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const o = item as Record<string, unknown>;
+    const to = asString(o.to);
+    const amount = typeof o.amount === "number" ? o.amount : NaN;
+    if (to === null || to.length === 0) continue;
+    if (!Number.isInteger(amount) || amount <= 0) continue;
+    if (to === ctx.self_id) continue;
+    if (!ctx.alive_ids.has(to)) continue;
+    out.push({ to, amount });
+  }
+  const truncated = out.length > MAX_PLEDGES_PER_PHASE;
+  return { pledges: truncated ? out.slice(0, MAX_PLEDGES_PER_PHASE) : out, truncated };
+}
+
+function readInnerThought(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw;
+}
+
+export function parseDecisionAction(rawText: string, ctx: ParseContext): DecisionParseResult {
+  const j = extractJsonObject(rawText);
+  if (!j.ok) return { ok: false, error: j.error };
+  if (typeof j.obj !== "object" || j.obj === null) {
     return { ok: false, error: "not_an_object" };
   }
-  const o = obj as Record<string, unknown>;
-  const action = o.action;
-  if (action === "noop") {
-    return { ok: true, action: { action: "noop" } };
+  const o = j.obj as Record<string, unknown>;
+
+  if (!Array.isArray(o.requests) && o.requests !== undefined) {
+    return { ok: false, error: "requests_not_array" };
   }
+
+  const requests: { target: string; message: string }[] = [];
+  let reqTruncated = false;
+  if (Array.isArray(o.requests)) {
+    for (const item of o.requests) {
+      if (typeof item !== "object" || item === null) continue;
+      const r = item as Record<string, unknown>;
+      const target = asString(r.target);
+      const message = asString(r.message);
+      if (target === null || target.length === 0) continue;
+      if (message === null) continue;
+      if (target === ctx.self_id) continue;
+      if (!ctx.alive_ids.has(target)) continue;
+      requests.push({ target, message });
+    }
+    if (requests.length > MAX_REQUESTS_PER_PHASE) {
+      reqTruncated = true;
+      requests.length = MAX_REQUESTS_PER_PHASE;
+    }
+  }
+
+  const { pledges, truncated: plTruncated } = validatePledgeArray(o.pledges, ctx);
+
+  const action: DecisionAction = {
+    phase: "decision",
+    requests,
+    pledges,
+    inner_thought: readInnerThought(o.inner_thought),
+  };
+  const truncated = reqTruncated || plTruncated;
+  return truncated ? { ok: true, action, policy_truncated: true } : { ok: true, action };
+}
+
+export function parseResponseAction(rawText: string, ctx: ParseContext): ResponseParseResult {
+  const j = extractJsonObject(rawText);
+  if (!j.ok) return { ok: false, error: j.error };
+  if (typeof j.obj !== "object" || j.obj === null) {
+    return { ok: false, error: "not_an_object" };
+  }
+  const o = j.obj as Record<string, unknown>;
+
+  if (!Array.isArray(o.allocations) && o.allocations !== undefined) {
+    return { ok: false, error: "allocations_not_array" };
+  }
+
+  const allocations: ResponseAction["allocations"] = [];
+  if (Array.isArray(o.allocations)) {
+    for (const item of o.allocations) {
+      if (typeof item !== "object" || item === null) continue;
+      const a = item as Record<string, unknown>;
+      const to = asString(a.to);
+      const amount = typeof a.amount === "number" ? a.amount : NaN;
+      if (to === null || to.length === 0) continue;
+      if (!Number.isInteger(amount) || amount <= 0) continue;
+      // We do NOT drop dead-target allocations at parse-time; settle.ts handles it
+      // (the same allocation may need to be visible in the JSONL for inspection).
+      if (to === ctx.self_id) continue;
+      const reason =
+        typeof a.reason === "string" && a.reason.trim().length > 0 ? a.reason : undefined;
+      allocations.push({
+        to,
+        amount,
+        ...(reason !== undefined ? { reason } : {}),
+      });
+    }
+  }
+
+  const { pledges, truncated: plTruncated } = validatePledgeArray(o.pledges, ctx);
+
+  const action: ResponseAction = {
+    phase: "response",
+    allocations,
+    pledges,
+    inner_thought: readInnerThought(o.inner_thought),
+  };
+  return plTruncated ? { ok: true, action, policy_truncated: true } : { ok: true, action };
+}
+
+// ───── Legacy parser ─────
+// Used ONLY by the UI when replaying old JSONL files that contain the
+// pre-pledge `agent_decision` events with the single-action shape. The engine
+// no longer calls this.
+
+export type LegacyParseResult =
+  | { ok: true; action: AgentAction }
+  | { ok: false; error: string };
+
+/** @deprecated Use parseDecisionAction / parseResponseAction. Kept for legacy JSONL parsing. */
+export function parseAgentResponse(raw: string): LegacyParseResult {
+  const j = extractJsonObject(raw);
+  if (!j.ok) return { ok: false, error: j.error };
+  if (typeof j.obj !== "object" || j.obj === null) {
+    return { ok: false, error: "not_an_object" };
+  }
+  const o = j.obj as Record<string, unknown>;
+  const action = o.action;
+  if (action === "noop") return { ok: true, action: { action: "noop" } };
   if (action === "request") {
-    if (typeof o.target !== "string" || o.target.length === 0) {
+    const target = asString(o.target);
+    const message = asString(o.message);
+    if (target === null || target.length === 0) {
       return { ok: false, error: "request_missing_target" };
     }
-    if (typeof o.message !== "string") {
+    if (message === null) {
       return { ok: false, error: "request_missing_message" };
     }
-    return {
-      ok: true,
-      action: { action: "request", target: o.target, message: o.message },
-    };
+    return { ok: true, action: { action: "request", target, message } };
   }
   if (action === "respond") {
     if (!Array.isArray(o.allocations)) {
@@ -92,9 +230,7 @@ function validateAction(obj: unknown): ParseResult {
       if (typeof a !== "object" || a === null) continue;
       const ar = a as Record<string, unknown>;
       if (typeof ar.to !== "string" || typeof ar.amount !== "number") continue;
-      // Drop non-integer / non-positive at validate time (settle.ts will also guard)
       if (!Number.isInteger(ar.amount) || ar.amount <= 0) continue;
-      // Reason is optional; only keep if it's a non-empty string. Non-string => drop silently.
       const reason =
         typeof ar.reason === "string" && ar.reason.trim().length > 0 ? ar.reason : undefined;
       allocs.push({
@@ -103,10 +239,7 @@ function validateAction(obj: unknown): ParseResult {
         ...(reason !== undefined ? { reason } : {}),
       });
     }
-    return {
-      ok: true,
-      action: { action: "respond", allocations: allocs },
-    };
+    return { ok: true, action: { action: "respond", allocations: allocs } };
   }
   return { ok: false, error: `unknown_action: ${String(action)}` };
 }

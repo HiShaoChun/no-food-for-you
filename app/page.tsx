@@ -35,6 +35,11 @@ function defaultConfig(av: Availability | null): GameConfig {
     pressure: { type: "constant", amount: 1 },
     allocation_policy: { type: "fully_free" },
     master_seed: randomSeed(),
+    pledges: {
+      enabled: true,
+      betrayal_bonus_table: [3, 1, 0, -2],
+      keep_promise_bonus: 0,
+    },
   };
 }
 
@@ -154,6 +159,8 @@ export default function Page(): React.ReactElement {
 function dedupeKey(e: SimEvent): string {
   switch (e.type) {
     case "agent_decision":
+    case "agent_decision_phase":
+    case "agent_response_phase":
       return `${e.type}:${e.round}:${e.agent}`;
     case "round_started":
     case "round_settled":
