@@ -65,21 +65,30 @@ export function PublicPledgesPanel({ agents, events }: Props): React.ReactElemen
         <ul className="side-panel-list">
           {active.map((p, i) => (
             <li key={i} className="pledge-row">
-              <span
-                className="transfer-dot"
-                style={{ background: agentColor(agents, p.from) }}
-                aria-hidden
-              />
-              <span>{nameOf(agents, p.from)}</span>
-              <span className="arrow">→</span>
-              <span
-                className="transfer-dot"
-                style={{ background: agentColor(agents, p.to) }}
-                aria-hidden
-              />
-              <span>{nameOf(agents, p.to)}</span>
-              <span className="amount">{p.amount}</span>
-              <span className="due">R{p.due_round} 到期</span>
+              <div className="pledge-row-meta">
+                <span className="round-tag pledge-round-tag">R{p.due_round} 到期</span>
+                <span className="pledge-amount-badge">
+                  承诺 <strong>{p.amount}</strong> 食物
+                </span>
+              </div>
+              <div className="party-line">
+                <span className="party-label">承诺方</span>
+                <span
+                  className="transfer-dot"
+                  style={{ background: agentColor(agents, p.from) }}
+                  aria-hidden
+                />
+                <span className="party-name">{nameOf(agents, p.from)}</span>
+              </div>
+              <div className="party-line">
+                <span className="party-label">接收方</span>
+                <span
+                  className="transfer-dot"
+                  style={{ background: agentColor(agents, p.to) }}
+                  aria-hidden
+                />
+                <span className="party-name">{nameOf(agents, p.to)}</span>
+              </div>
             </li>
           ))}
         </ul>

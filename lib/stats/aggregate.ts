@@ -87,16 +87,6 @@ export function computeStats(agents: AgentInstance[], events: SimEvent[]): SimSt
         total_tokens_response.input += e.tokens.input;
         total_tokens_response.output += e.tokens.output;
       }
-    } else if (e.type === "agent_decision") {
-      // Legacy event support
-      const s = byId.get(e.agent);
-      if (!s) continue;
-      if (e.parsed?.action === "request") s.requests += 1;
-      else if (e.parsed?.action === "respond") s.responses += 1;
-      if (e.tokens) {
-        total_tokens.input += e.tokens.input;
-        total_tokens.output += e.tokens.output;
-      }
     } else if (e.type === "round_settled") {
       total_rounds = Math.max(total_rounds, e.round);
       for (const id of Object.keys(e.energies)) {

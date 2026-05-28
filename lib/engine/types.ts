@@ -125,31 +125,6 @@ export type GameState = {
   rng: () => number; // seeded PRNG
 };
 
-// ───── Legacy single-action union ─────
-// RETAINED only so older JSONL files (pre-pledge change) can still be
-// deserialized by the UI's event renderer. New simulations never produce these.
-
-/** @deprecated Use DecisionAction/ResponseAction. Kept for replay of legacy JSONL only. */
-export type LegacyRequestAction = {
-  action: "request";
-  target: string;
-  message: string;
-};
-
-/** @deprecated */
-export type LegacyRespondAction = {
-  action: "respond";
-  allocations: Allocation[];
-};
-
-/** @deprecated */
-export type LegacyNoopAction = {
-  action: "noop";
-};
-
-/** @deprecated */
-export type AgentAction = LegacyRequestAction | LegacyRespondAction | LegacyNoopAction;
-
 // ───── Events (what gets emitted to SSE/JSONL) ─────
 
 export type RoundSettledEvent = {
@@ -163,6 +138,24 @@ export type RoundSettledEvent = {
   eliminated: string[];
   pledges_made_this_round: Pledge[];
   pledges_settled_this_round: PledgeSettlement[];
+  t: string;
+};
+
+export type AgentDecisionStartedEvent = {
+  type: "agent_decision_started";
+  sim_id: string;
+  round: number;
+  agent: string;
+  phase: "decision";
+  t: string;
+};
+
+export type AgentResponseStartedEvent = {
+  type: "agent_response_started";
+  sim_id: string;
+  round: number;
+  agent: string;
+  phase: "response";
   t: string;
 };
 
@@ -192,26 +185,13 @@ export type AgentResponsePhaseEvent = {
   t: string;
 };
 
-/** @deprecated Emitted by older sims only; UI may receive this when replaying legacy JSONL. */
-export type LegacyAgentDecisionEvent = {
-  type: "agent_decision";
-  sim_id: string;
-  round: number;
-  agent: string;
-  raw: string;
-  parsed: AgentAction | null;
-  parse_error?: string;
-  policy_truncated?: boolean;
-  tokens?: { input: number; output: number };
-  t: string;
-};
-
 export type SimEvent =
   | { type: "sim_started"; sim_id: string; config: GameConfig; t: string }
   | { type: "round_started"; sim_id: string; round: number; t: string }
+  | AgentDecisionStartedEvent
+  | AgentResponseStartedEvent
   | AgentDecisionPhaseEvent
   | AgentResponsePhaseEvent
-  | LegacyAgentDecisionEvent
   | RoundSettledEvent
   | {
       type: "sim_ended";

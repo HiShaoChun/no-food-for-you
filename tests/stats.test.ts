@@ -13,28 +13,43 @@ function evt(e: Partial<SimEvent> & { type: SimEvent["type"]; sim_id?: string; t
 }
 
 describe("computeStats", () => {
-  it("counts requests and responses from agent_decision events", () => {
+  it("counts requests and responses from phase events", () => {
     const events: SimEvent[] = [
       evt({
-        type: "agent_decision",
+        type: "agent_decision_phase",
         round: 1,
         agent: "A1",
         raw: "",
-        parsed: { action: "request", target: "A2", message: "help" },
+        parsed: {
+          phase: "decision",
+          requests: [{ target: "A2", message: "help" }],
+          pledges: [],
+          inner_thought: "",
+        },
       }),
       evt({
-        type: "agent_decision",
+        type: "agent_response_phase",
         round: 1,
         agent: "A2",
         raw: "",
-        parsed: { action: "respond", allocations: [{ to: "A1", amount: 1 }] },
+        parsed: {
+          phase: "response",
+          allocations: [{ to: "A1", amount: 1 }],
+          pledges: [],
+          inner_thought: "",
+        },
       }),
       evt({
-        type: "agent_decision",
+        type: "agent_decision_phase",
         round: 1,
         agent: "A3",
         raw: "",
-        parsed: { action: "noop" },
+        parsed: {
+          phase: "decision",
+          requests: [],
+          pledges: [],
+          inner_thought: "",
+        },
       }),
       evt({
         type: "round_settled",
@@ -57,13 +72,15 @@ describe("computeStats", () => {
   it("uses transfers (ground truth) for given/received, not agent-declared amounts", () => {
     const events: SimEvent[] = [
       evt({
-        type: "agent_decision",
+        type: "agent_response_phase",
         round: 1,
         agent: "A1",
         raw: "",
         parsed: {
-          action: "respond",
+          phase: "response",
           allocations: [{ to: "A2", amount: 10 }], // declared 10
+          pledges: [],
+          inner_thought: "",
         },
       }),
       evt({
@@ -128,18 +145,28 @@ describe("computeStats", () => {
   it("computes awards correctly", () => {
     const events: SimEvent[] = [
       evt({
-        type: "agent_decision",
+        type: "agent_decision_phase",
         round: 1,
         agent: "A1",
         raw: "",
-        parsed: { action: "request", target: "A2", message: "x" },
+        parsed: {
+          phase: "decision",
+          requests: [{ target: "A2", message: "x" }],
+          pledges: [],
+          inner_thought: "",
+        },
       }),
       evt({
-        type: "agent_decision",
+        type: "agent_decision_phase",
         round: 2,
         agent: "A1",
         raw: "",
-        parsed: { action: "request", target: "A2", message: "y" },
+        parsed: {
+          phase: "decision",
+          requests: [{ target: "A2", message: "y" }],
+          pledges: [],
+          inner_thought: "",
+        },
       }),
       evt({
         type: "round_settled",

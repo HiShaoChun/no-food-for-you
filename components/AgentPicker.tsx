@@ -8,6 +8,7 @@ type Props = {
   agents: AgentInstance[];
   availability: Availability | null;
   onChange: (next: AgentInstance[]) => void;
+  hoveredAgentId?: string | null;
 };
 
 let nextIdCounter = 0;
@@ -42,7 +43,7 @@ function agentColor(idx: number): string {
   return `var(--A${(idx % 10) + 1})`;
 }
 
-export function AgentPicker({ agents, availability, onChange }: Props): React.ReactElement {
+export function AgentPicker({ agents, availability, onChange, hoveredAgentId }: Props): React.ReactElement {
   const canAdd = agents.length < 10;
   const canRemove = agents.length > 2;
 
@@ -72,8 +73,11 @@ export function AgentPicker({ agents, availability, onChange }: Props): React.Re
       {agents.map((a, idx) => {
         const { provider } = getModel(a.model_key);
         const providerOk = availability ? availability[provider] : true;
+        const isHovered = hoveredAgentId === a.id;
+        const isDimmed = hoveredAgentId !== null && hoveredAgentId !== undefined && !isHovered;
+        const rowClass = `agent-row${isHovered ? " is-hovered" : ""}${isDimmed ? " is-dimmed" : ""}`;
         return (
-          <div key={a.id} className="agent-row">
+          <div key={a.id} className={rowClass} data-agent-id={a.id}>
             <span
               className="agent-swatch"
               style={{ background: agentColor(idx) }}

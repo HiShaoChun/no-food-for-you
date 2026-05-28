@@ -11,9 +11,16 @@ import { DefectionLedger } from "./DefectionLedger";
 type Props = {
   config: GameConfig;
   events: SimEvent[];
+  hoveredAgentId: string | null;
+  onHoverAgentChange: (id: string | null) => void;
 };
 
-export function Arena({ config, events }: Props): React.ReactElement {
+export function Arena({
+  config,
+  events,
+  hoveredAgentId,
+  onHoverAgentChange,
+}: Props): React.ReactElement {
   const [showInnerThought, setShowInnerThought] = useState(false);
   const series = useMemo(() => buildSeries(config.agents, events, config.initial_energy), [
     config.agents,
@@ -34,13 +41,19 @@ export function Arena({ config, events }: Props): React.ReactElement {
             研究者视角
           </label>
         </div>
-        <EnergyChart agents={config.agents} series={series} />
+        <EnergyChart
+          agents={config.agents}
+          series={series}
+          hoveredAgentId={hoveredAgentId}
+        />
       </div>
       <ChatBubbles
         agents={config.agents}
         events={events}
         initialEnergy={config.initial_energy}
         showInnerThought={showInnerThought}
+        hoveredAgentId={hoveredAgentId}
+        onHoverAgentChange={onHoverAgentChange}
       />
       <aside className="arena-side">
         <PublicPledgesPanel agents={config.agents} events={events} />

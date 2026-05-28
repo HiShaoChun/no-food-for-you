@@ -11,8 +11,6 @@ export function TokenMeter({ events }: { events: SimEvent[] }): React.ReactEleme
   let decisionOut = 0;
   let responseIn = 0;
   let responseOut = 0;
-  let legacyIn = 0;
-  let legacyOut = 0;
   for (const e of events) {
     if (e.type === "agent_decision_phase" && e.tokens) {
       decisionIn += e.tokens.input;
@@ -20,13 +18,10 @@ export function TokenMeter({ events }: { events: SimEvent[] }): React.ReactEleme
     } else if (e.type === "agent_response_phase" && e.tokens) {
       responseIn += e.tokens.input;
       responseOut += e.tokens.output;
-    } else if (e.type === "agent_decision" && e.tokens) {
-      legacyIn += e.tokens.input;
-      legacyOut += e.tokens.output;
     }
   }
-  const totalIn = decisionIn + responseIn + legacyIn;
-  const totalOut = decisionOut + responseOut + legacyOut;
+  const totalIn = decisionIn + responseIn;
+  const totalOut = decisionOut + responseOut;
   return (
     <div className="footer">
       <div className="token-meter">

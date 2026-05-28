@@ -42,8 +42,6 @@ type ResponseEventPayload = Omit<
 >;
 
 export type RoundOutput = {
-  decision_events: DecisionEventPayload[];
-  response_events: ResponseEventPayload[];
   next_state: GameState;
   prev_energies: Record<string, number>;
   transfers: Array<{ from: string; to: string; amount: number; reason?: string }>;
@@ -53,75 +51,99 @@ export type RoundOutput = {
   pledges_settled_this_round: PledgeSettlement[];
 };
 
+export type PhaseEventEmitter = (kind: "decision" | "response", payload: DecisionEventPayload | ResponseEventPayload) => void;
+
+export type RoundCallbacks = {
+  emitPhaseStart: (kind: "decision" | "response", agent_id: string) => void;
+  emitPhaseEvent: PhaseEventEmitter;
+};
+
 export async function runRound(
   state: GameState,
   agents: readonly AgentRuntime[],
+  cb: RoundCallbacks,
 ): Promise<RoundOutput> {
   const living = agents.filter((a) => !state.eliminated.has(a.id));
 
-  // ───── Decision phase (parallel) ─────
-  const decisionRaw = await Promise.all(
-    living.map(async (a) => {
+  // ───── Decision phase ─────
+  // 1. Broadcast "started" for every living agent BEFORE dispatching any LLM call.
+  for (const a of living) {
+    cb.emitPhaseStart("decision", a.id);
+  }
+
+  // 2. Concurrent dispatch — each promise emits its own phase event as soon as the LLM resolves.
+  //    Returns the decision input for downstream aggregation. A rejection in the agent
+  //    runtime is converted to a parsed:null phase event so the UI placeholder is never orphaned.
+  const decisionInputs: DecisionInput[] = await Promise.all(
+    living.map(async (a): Promise<DecisionInput> => {
       const view = buildDecisionView(state, a.id);
-      const result = await a.decide_phase(view);
-      return { agent_id: a.id, result };
+      const result = await a.decide_phase(view).catch((err) => ({
+        raw: "",
+        parsed: null,
+        parse_error: `agent_error: ${err instanceof Error ? err.message : String(err)}`,
+      }));
+      cb.emitPhaseEvent("decision", {
+        round: state.round,
+        agent: a.id,
+        raw: result.raw,
+        parsed: result.parsed,
+        ...(result.parse_error !== undefined ? { parse_error: result.parse_error } : {}),
+        ...("policy_truncated" in result && result.policy_truncated !== undefined
+          ? { policy_truncated: result.policy_truncated }
+          : {}),
+        ...("tokens" in result && result.tokens !== undefined ? { tokens: result.tokens } : {}),
+      });
+      return {
+        agent_id: a.id,
+        action: result.parsed ?? {
+          phase: "decision",
+          requests: [],
+          pledges: [],
+          inner_thought: "",
+        },
+      };
     }),
   );
-
-  const decisionInputs: DecisionInput[] = decisionRaw.map(({ agent_id, result }) => ({
-    agent_id,
-    action: result.parsed ?? {
-      phase: "decision",
-      requests: [],
-      pledges: [],
-      inner_thought: "",
-    },
-  }));
-
-  const decision_events = decisionRaw.map(({ agent_id, result }) => ({
-    round: state.round,
-    agent: agent_id,
-    raw: result.raw,
-    parsed: result.parsed,
-    ...(result.parse_error !== undefined ? { parse_error: result.parse_error } : {}),
-    ...(result.policy_truncated !== undefined ? { policy_truncated: result.policy_truncated } : {}),
-    ...(result.tokens !== undefined ? { tokens: result.tokens } : {}),
-  }));
 
   // ───── Request routing into this round's response inbox ─────
   const { inboxes_this_round, request_events } = routeRequests(state, decisionInputs);
 
-  // ───── Response phase (parallel) ─────
-  const responseRaw = await Promise.all(
-    living.map(async (a) => {
+  // ───── Response phase ─────
+  // 1. Broadcast "started" for every living agent before dispatching response LLM calls.
+  for (const a of living) {
+    cb.emitPhaseStart("response", a.id);
+  }
+
+  // 2. Concurrent dispatch — emit each response event the moment its LLM resolves.
+  //    Same defensive wrap as decision phase: agent runtime rejections become parsed:null phase events.
+  const responseInputs: ResponseInput[] = await Promise.all(
+    living.map(async (a): Promise<ResponseInput> => {
       const inbox: InboxMessage[] = inboxes_this_round[a.id] ?? [];
       const view = buildResponseView(state, a.id, inbox);
-      const result = await a.respond_phase(view);
-      return { agent_id: a.id, result };
+      const result = await a.respond_phase(view).catch((err) => ({
+        raw: "",
+        parsed: null,
+        parse_error: `agent_error: ${err instanceof Error ? err.message : String(err)}`,
+      }));
+      cb.emitPhaseEvent("response", {
+        round: state.round,
+        agent: a.id,
+        raw: result.raw,
+        parsed: result.parsed,
+        ...(result.parse_error !== undefined ? { parse_error: result.parse_error } : {}),
+        ...("policy_truncated" in result && result.policy_truncated !== undefined
+          ? { policy_truncated: result.policy_truncated }
+          : {}),
+        ...("tokens" in result && result.tokens !== undefined ? { tokens: result.tokens } : {}),
+      });
+      return { agent_id: a.id, action: result.parsed };
     }),
   );
-
-  const responseInputs: ResponseInput[] = responseRaw.map(({ agent_id, result }) => ({
-    agent_id,
-    action: result.parsed,
-  }));
-
-  const response_events = responseRaw.map(({ agent_id, result }) => ({
-    round: state.round,
-    agent: agent_id,
-    raw: result.raw,
-    parsed: result.parsed,
-    ...(result.parse_error !== undefined ? { parse_error: result.parse_error } : {}),
-    ...(result.policy_truncated !== undefined ? { policy_truncated: result.policy_truncated } : {}),
-    ...(result.tokens !== undefined ? { tokens: result.tokens } : {}),
-  }));
 
   // ───── Pledge settlement + transfers + pressure + elimination ─────
   const settled = settleResponses(state, decisionInputs, responseInputs, request_events);
 
   return {
-    decision_events,
-    response_events,
     next_state: settled.next_state,
     prev_energies: settled.prev_energies,
     transfers: settled.transfers,
@@ -173,32 +195,52 @@ export async function runSimulation(
     opts.emit({ type: "round_started", sim_id: opts.sim_id, round: state.round, t: now() });
 
     const {
-      decision_events,
-      response_events,
       next_state,
       prev_energies,
       transfers,
       pressure_cost,
       pledges_made_this_round,
       pledges_settled_this_round,
-    } = await runRound(state, opts.agents);
-
-    for (const ev of decision_events) {
-      opts.emit({
-        type: "agent_decision_phase",
-        sim_id: opts.sim_id,
-        ...ev,
-        t: now(),
-      });
-    }
-    for (const ev of response_events) {
-      opts.emit({
-        type: "agent_response_phase",
-        sim_id: opts.sim_id,
-        ...ev,
-        t: now(),
-      });
-    }
+    } = await runRound(state, opts.agents, {
+      emitPhaseStart: (kind, agent_id) => {
+        if (kind === "decision") {
+          opts.emit({
+            type: "agent_decision_started",
+            sim_id: opts.sim_id,
+            round: state.round,
+            agent: agent_id,
+            phase: "decision",
+            t: now(),
+          });
+        } else {
+          opts.emit({
+            type: "agent_response_started",
+            sim_id: opts.sim_id,
+            round: state.round,
+            agent: agent_id,
+            phase: "response",
+            t: now(),
+          });
+        }
+      },
+      emitPhaseEvent: (kind, payload) => {
+        if (kind === "decision") {
+          opts.emit({
+            type: "agent_decision_phase",
+            sim_id: opts.sim_id,
+            ...(payload as DecisionEventPayload),
+            t: now(),
+          });
+        } else {
+          opts.emit({
+            type: "agent_response_phase",
+            sim_id: opts.sim_id,
+            ...(payload as ResponseEventPayload),
+            t: now(),
+          });
+        }
+      },
+    });
 
     opts.emit({
       type: "round_settled",

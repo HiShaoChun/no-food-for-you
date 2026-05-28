@@ -1,23 +1,26 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentInstance,
   AgentDecisionPhaseEvent,
   AgentResponsePhaseEvent,
-  LegacyAgentDecisionEvent,
   SimEvent,
 } from "@/lib/engine/types";
 import { RoundSettleCard } from "./RoundSettleCard";
 import { TombstoneCard } from "./TombstoneCard";
 import { FinalStandings } from "./FinalStandings";
 import { computeStats } from "@/lib/stats/aggregate";
+import { AgentMention } from "./AgentMention";
+import { useStickyScroll } from "./hooks/useStickyScroll";
 
 type Props = {
   agents: AgentInstance[];
   events: SimEvent[];
   initialEnergy: number;
   showInnerThought: boolean;
+  hoveredAgentId: string | null;
+  onHoverAgentChange: (id: string | null) => void;
 };
 
 function agentColor(agents: AgentInstance[], id: string): string {
@@ -42,12 +45,14 @@ function InnerThought({ text }: { text: string }): React.ReactElement | null {
 
 function PledgeChips({
   pledges,
-  nameOf,
+  agents,
   dueRound,
+  onHoverChange,
 }: {
   pledges: { to: string; amount: number }[];
-  nameOf: (id: string) => string;
+  agents: AgentInstance[];
   dueRound: number;
+  onHoverChange: (id: string | null) => void;
 }): React.ReactElement | null {
   if (pledges.length === 0) return null;
   return (
@@ -57,7 +62,7 @@ function PledgeChips({
           <span className="pledge-icon" aria-hidden>◆</span>
           <span>承诺</span>
           <span className="arrow">→</span>
-          <span>{nameOf(p.to)}</span>
+          <AgentMention agents={agents} id={p.to} onHoverChange={onHoverChange} />
           <span className="amount">{p.amount}</span>
           <span className="due">R{dueRound}</span>
         </span>
@@ -66,24 +71,74 @@ function PledgeChips({
   );
 }
 
+/** Visual state for the per-(round, agent, phase) cell during streaming. */
+type CellState =
+  | { kind: "thinking"; round: number; agent: string; phase: "decision" | "response"; startedAt: number }
+  | { kind: "decision"; event: AgentDecisionPhaseEvent }
+  | { kind: "response"; event: AgentResponsePhaseEvent };
+
+function ThinkingBubble({
+  agents,
+  agentId,
+  phase,
+  startedAt,
+}: {
+  agents: AgentInstance[];
+  agentId: string;
+  phase: "decision" | "response";
+  startedAt: number;
+}): React.ReactElement {
+  const color = agentColor(agents, agentId);
+  const name = agents.find((a) => a.id === agentId)?.display_name ?? agentId;
+  const [timedOut, setTimedOut] = useState(() => Date.now() - startedAt >= 60_000);
+  useEffect(() => {
+    if (timedOut) return;
+    const remaining = 60_000 - (Date.now() - startedAt);
+    if (remaining <= 0) {
+      setTimedOut(true);
+      return;
+    }
+    const id = window.setTimeout(() => setTimedOut(true), remaining);
+    return () => window.clearTimeout(id);
+  }, [startedAt, timedOut]);
+  return (
+    <div className={`bubble thinking${timedOut ? " timeout" : ""}`} data-phase={phase}>
+      <div className="head">
+        <Avatar color={color} />
+        <span className="name">{name}</span>
+        <span className="chip phase">{phase === "decision" ? "决策" : "响应"}</span>
+      </div>
+      <div className="body thinking-body">
+        <span className="thinking-dots" aria-hidden>
+          <span />
+          <span />
+          <span />
+        </span>
+        <span className="thinking-label">{timedOut ? "响应超时·等待中" : "正在思考…"}</span>
+      </div>
+    </div>
+  );
+}
+
 function DecisionPhaseBubble({
   e,
   agents,
-  nameOf,
   showInnerThought,
+  onHoverChange,
 }: {
   e: AgentDecisionPhaseEvent;
   agents: AgentInstance[];
-  nameOf: (id: string) => string;
   showInnerThought: boolean;
+  onHoverChange: (id: string | null) => void;
 }): React.ReactElement {
   const color = agentColor(agents, e.agent);
+  const name = agents.find((a) => a.id === e.agent)?.display_name ?? e.agent;
   if (e.parsed === null) {
     return (
       <div className="bubble err">
         <div className="head">
           <Avatar color={color} />
-          <span className="name">{nameOf(e.agent)}</span>
+          <span className="name">{name}</span>
           <span className="chip phase">决策</span>
           <span className="chip err">Error</span>
         </div>
@@ -104,7 +159,7 @@ function DecisionPhaseBubble({
       <div className="bubble noop">
         <div className="head">
           <Avatar color={color} />
-          <span className="name">{nameOf(e.agent)}</span>
+          <span className="name">{name}</span>
           <span className="chip phase">决策</span>
           <span className="chip noop">无动作</span>
         </div>
@@ -116,7 +171,7 @@ function DecisionPhaseBubble({
     <div className="bubble req">
       <div className="head">
         <Avatar color={color} />
-        <span className="name">{nameOf(e.agent)}</span>
+        <span className="name">{name}</span>
         <span className="chip phase">决策</span>
       </div>
       <div className="body">
@@ -125,13 +180,18 @@ function DecisionPhaseBubble({
             {p.requests.map((r, i) => (
               <div className="alloc" key={`req-${i}`}>
                 <span className="arrow">→</span>
-                <span>{nameOf(r.target)}</span>
+                <AgentMention agents={agents} id={r.target} onHoverChange={onHoverChange} />
                 <span className="alloc-reason">· {r.message}</span>
               </div>
             ))}
           </div>
         )}
-        <PledgeChips pledges={p.pledges} nameOf={nameOf} dueRound={e.round + 1} />
+        <PledgeChips
+          pledges={p.pledges}
+          agents={agents}
+          dueRound={e.round + 1}
+          onHoverChange={onHoverChange}
+        />
       </div>
       {showInnerThought && <InnerThought text={p.inner_thought} />}
     </div>
@@ -141,21 +201,22 @@ function DecisionPhaseBubble({
 function ResponsePhaseBubble({
   e,
   agents,
-  nameOf,
   showInnerThought,
+  onHoverChange,
 }: {
   e: AgentResponsePhaseEvent;
   agents: AgentInstance[];
-  nameOf: (id: string) => string;
   showInnerThought: boolean;
+  onHoverChange: (id: string | null) => void;
 }): React.ReactElement {
   const color = agentColor(agents, e.agent);
+  const name = agents.find((a) => a.id === e.agent)?.display_name ?? e.agent;
   if (e.parsed === null) {
     return (
       <div className="bubble err">
         <div className="head">
           <Avatar color={color} />
-          <span className="name">{nameOf(e.agent)}</span>
+          <span className="name">{name}</span>
           <span className="chip phase">响应</span>
           <span className="chip err">Error</span>
         </div>
@@ -176,7 +237,7 @@ function ResponsePhaseBubble({
       <div className="bubble noop">
         <div className="head">
           <Avatar color={color} />
-          <span className="name">{nameOf(e.agent)}</span>
+          <span className="name">{name}</span>
           <span className="chip phase">响应</span>
           <span className="chip noop">无分配</span>
         </div>
@@ -188,7 +249,7 @@ function ResponsePhaseBubble({
     <div className="bubble resp">
       <div className="head">
         <Avatar color={color} />
-        <span className="name">{nameOf(e.agent)}</span>
+        <span className="name">{name}</span>
         <span className="chip phase">响应</span>
       </div>
       <div className="body">
@@ -197,98 +258,21 @@ function ResponsePhaseBubble({
             {p.allocations.map((al, i) => (
               <span className="alloc" key={`a-${i}`}>
                 <span className="arrow">→</span>
-                <span>{nameOf(al.to)}</span>
+                <AgentMention agents={agents} id={al.to} onHoverChange={onHoverChange} />
                 <span className="amount">{al.amount}</span>
                 {al.reason && <span className="alloc-reason">· {al.reason}</span>}
               </span>
             ))}
           </div>
         )}
-        <PledgeChips pledges={p.pledges} nameOf={nameOf} dueRound={e.round + 1} />
+        <PledgeChips
+          pledges={p.pledges}
+          agents={agents}
+          dueRound={e.round + 1}
+          onHoverChange={onHoverChange}
+        />
       </div>
       {showInnerThought && <InnerThought text={p.inner_thought} />}
-    </div>
-  );
-}
-
-function LegacyDecisionBubble({
-  e,
-  agents,
-  nameOf,
-}: {
-  e: LegacyAgentDecisionEvent;
-  agents: AgentInstance[];
-  nameOf: (id: string) => string;
-}): React.ReactElement {
-  const color = agentColor(agents, e.agent);
-  const p = e.parsed;
-  if (p === null) {
-    return (
-      <div className="bubble err">
-        <div className="head">
-          <Avatar color={color} />
-          <span className="name">{nameOf(e.agent)}</span>
-          <span className="chip err">Error</span>
-        </div>
-        <div className="body">解析失败{e.parse_error ? ` · ${e.parse_error}` : ""}</div>
-        {e.raw && (
-          <details>
-            <summary>show raw</summary>
-            <div className="raw">{e.raw}</div>
-          </details>
-        )}
-      </div>
-    );
-  }
-  if (p.action === "request") {
-    return (
-      <div className="bubble req">
-        <div className="head">
-          <Avatar color={color} />
-          <span className="name">{nameOf(e.agent)}</span>
-          <span className="arrow">→</span>
-          <span className="target">{nameOf(p.target)}</span>
-          <span className="chip req">Request</span>
-        </div>
-        <div className="body">{p.message}</div>
-      </div>
-    );
-  }
-  if (p.action === "respond") {
-    return (
-      <div className="bubble resp">
-        <div className="head">
-          <Avatar color={color} />
-          <span className="name">{nameOf(e.agent)}</span>
-          <span className="chip resp">Allocate</span>
-        </div>
-        <div className="body">
-          {p.allocations.length === 0 ? (
-            <span style={{ color: "var(--text-faint)", fontStyle: "italic" }}>（空分配）</span>
-          ) : (
-            <div className="alloc-list">
-              {p.allocations.map((al, i) => (
-                <span className="alloc" key={`${al.to}-${i}`}>
-                  <span className="arrow">→</span>
-                  {nameOf(al.to)}
-                  <span className="amount">{al.amount}</span>
-                  {al.reason && <span className="alloc-reason">· {al.reason}</span>}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="bubble noop">
-      <div className="head">
-        <Avatar color={color} />
-        <span className="name">{nameOf(e.agent)}</span>
-        <span className="chip noop">Noop</span>
-      </div>
-      <div className="body">无动作</div>
     </div>
   );
 }
@@ -298,9 +282,11 @@ export function ChatBubbles({
   events,
   initialEnergy,
   showInnerThought,
+  hoveredAgentId,
+  onHoverAgentChange,
 }: Props): React.ReactElement {
   const ref = useRef<HTMLDivElement>(null);
-  const nameOf = (id: string): string => agents.find((a) => a.id === id)?.display_name ?? id;
+  void hoveredAgentId; // currently unused inside the list itself; hover state is driven via callback
 
   const stats = useMemo(() => computeStats(agents, events), [agents, events]);
   const statsById = useMemo(
@@ -308,11 +294,63 @@ export function ChatBubbles({
     [stats.per_agent],
   );
 
-  useEffect(() => {
-    const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [events.length]);
+  // ── Build a stable map keyed by (round, agent, phase) so a started event renders a
+  //    placeholder and the corresponding _phase event replaces it in place. We iterate
+  //    events in SSE arrival order — that order IS the desired render order.
+  //
+  // For each cell key, the rule is: a _phase event always wins over a _started event.
+  // If the phase event arrives before the started event (backlog replay edge case),
+  // we still render the phase event and skip the placeholder.
+  const cells = useMemo(() => {
+    const map = new Map<string, CellState>();
+    const orderedKeys: string[] = [];
+    for (const e of events) {
+      if (e.type === "agent_decision_started") {
+        const key = `${e.round}:${e.agent}:decision`;
+        if (!map.has(key)) {
+          orderedKeys.push(key);
+          map.set(key, {
+            kind: "thinking",
+            round: e.round,
+            agent: e.agent,
+            phase: "decision",
+            startedAt: Date.parse(e.t) || Date.now(),
+          });
+        }
+      } else if (e.type === "agent_response_started") {
+        const key = `${e.round}:${e.agent}:response`;
+        if (!map.has(key)) {
+          orderedKeys.push(key);
+          map.set(key, {
+            kind: "thinking",
+            round: e.round,
+            agent: e.agent,
+            phase: "response",
+            startedAt: Date.parse(e.t) || Date.now(),
+          });
+        }
+      } else if (e.type === "agent_decision_phase") {
+        const key = `${e.round}:${e.agent}:decision`;
+        if (!map.has(key)) orderedKeys.push(key);
+        map.set(key, { kind: "decision", event: e });
+      } else if (e.type === "agent_response_phase") {
+        const key = `${e.round}:${e.agent}:response`;
+        if (!map.has(key)) orderedKeys.push(key);
+        map.set(key, { kind: "response", event: e });
+      }
+    }
+    return { map, orderedKeys };
+  }, [events]);
 
+  // ── Sticky scroll: deps = number of events received. Each new event "counts" as
+  //    a new message for the indicator while scrolled away.
+  const { pinned, newCount, jumpToBottom } = useStickyScroll(ref, [events.length]);
+
+  // ── Build the linear render list. Each event is rendered at its position based on
+  //    event type: phase/started events render via the cells map (so phase replaces started
+  //    in place), other events (round divider, settle card, tombstone, final) render directly.
+  //    A cell key only emits a single bubble at the FIRST event that touches it.
+  const renderedCellKeys = new Set<string>();
   const blocks: React.ReactElement[] = [];
   let currentRound = -1;
   events.forEach((e, idx) => {
@@ -325,33 +363,43 @@ export function ChatBubbles({
       );
       return;
     }
-    if (e.type === "agent_decision_phase") {
+    if (
+      e.type === "agent_decision_started" ||
+      e.type === "agent_decision_phase"
+    ) {
+      const key = `${e.round}:${e.agent}:decision`;
+      if (renderedCellKeys.has(key)) return;
+      renderedCellKeys.add(key);
+      const cell = cells.map.get(key);
+      if (!cell) return;
       blocks.push(
-        <DecisionPhaseBubble
-          key={`d-${idx}`}
-          e={e}
+        <CellRenderer
+          key={`cell-${key}`}
+          cell={cell}
           agents={agents}
-          nameOf={nameOf}
           showInnerThought={showInnerThought}
+          onHoverChange={onHoverAgentChange}
         />,
       );
       return;
     }
-    if (e.type === "agent_response_phase") {
+    if (
+      e.type === "agent_response_started" ||
+      e.type === "agent_response_phase"
+    ) {
+      const key = `${e.round}:${e.agent}:response`;
+      if (renderedCellKeys.has(key)) return;
+      renderedCellKeys.add(key);
+      const cell = cells.map.get(key);
+      if (!cell) return;
       blocks.push(
-        <ResponsePhaseBubble
-          key={`r-${idx}`}
-          e={e}
+        <CellRenderer
+          key={`cell-${key}`}
+          cell={cell}
           agents={agents}
-          nameOf={nameOf}
           showInnerThought={showInnerThought}
+          onHoverChange={onHoverAgentChange}
         />,
-      );
-      return;
-    }
-    if (e.type === "agent_decision") {
-      blocks.push(
-        <LegacyDecisionBubble key={`l-${idx}`} e={e} agents={agents} nameOf={nameOf} />,
       );
       return;
     }
@@ -394,6 +442,57 @@ export function ChatBubbles({
         </div>
       )}
       {blocks}
+      {!pinned && newCount > 0 && (
+        <button
+          type="button"
+          className="jump-to-bottom"
+          onClick={jumpToBottom}
+          aria-label="跳到底部"
+        >
+          {newCount} 条新消息 ↓
+        </button>
+      )}
     </div>
+  );
+}
+
+function CellRenderer({
+  cell,
+  agents,
+  showInnerThought,
+  onHoverChange,
+}: {
+  cell: CellState;
+  agents: AgentInstance[];
+  showInnerThought: boolean;
+  onHoverChange: (id: string | null) => void;
+}): React.ReactElement {
+  if (cell.kind === "thinking") {
+    return (
+      <ThinkingBubble
+        agents={agents}
+        agentId={cell.agent}
+        phase={cell.phase}
+        startedAt={cell.startedAt}
+      />
+    );
+  }
+  if (cell.kind === "decision") {
+    return (
+      <DecisionPhaseBubble
+        e={cell.event}
+        agents={agents}
+        showInnerThought={showInnerThought}
+        onHoverChange={onHoverChange}
+      />
+    );
+  }
+  return (
+    <ResponsePhaseBubble
+      e={cell.event}
+      agents={agents}
+      showInnerThought={showInnerThought}
+      onHoverChange={onHoverChange}
+    />
   );
 }

@@ -18,9 +18,10 @@ type Props = {
   running: boolean;
   onChange: (cfg: GameConfig) => void;
   onStart: () => void;
+  hoveredAgentId?: string | null;
 };
 
-export function ConfigPanel({ config, availability, running, onChange, onStart }: Props): React.ReactElement {
+export function ConfigPanel({ config, availability, running, onChange, onStart, hoveredAgentId }: Props): React.ReactElement {
   const validation = validate(config, availability);
 
   function patch<K extends keyof GameConfig>(key: K, value: GameConfig[K]): void {
@@ -33,6 +34,7 @@ export function ConfigPanel({ config, availability, running, onChange, onStart }
         agents={config.agents}
         availability={availability}
         onChange={(agents) => patch("agents", agents)}
+        hoveredAgentId={hoveredAgentId}
       />
 
       <div className="section">

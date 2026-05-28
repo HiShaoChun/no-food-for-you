@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseAgentResponse,
   parseDecisionAction,
   parseResponseAction,
   type ParseContext,
@@ -177,6 +176,47 @@ describe("parseDecisionAction — invalid", () => {
   });
 });
 
+describe("parseDecisionAction — truncated output repair", () => {
+  it("salvages requests/pledges when inner_thought string is cut off mid-value", () => {
+    // Real-world case: max_tokens hit while writing a verbose inner_thought.
+    // The string and outer object are both unclosed.
+    const truncated =
+      '```json\n{\n  "requests": [{"target":"A2","message":"hi"}],\n' +
+      '  "pledges": [{"to":"A2","amount":1}],\n' +
+      '  "inner_thought": "Round 1 strategy: small pledges to build trust, plan to fulfill. The +3 solo betrayal is tempting but being marked untrustworthy';
+    const r = parseDecisionAction(truncated, ctx);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.action.requests).toEqual([{ target: "A2", message: "hi" }]);
+      expect(r.action.pledges).toEqual([{ to: "A2", amount: 1 }]);
+    }
+  });
+
+  it("salvages when truncation lands right after a key-colon (no value yet)", () => {
+    // e.g. `..., "inner_thought":` — the dangling `"key":` must be stripped
+    // before we close the object or JSON.parse will reject `:}`.
+    const truncated =
+      '{"requests":[],"pledges":[{"to":"A2","amount":1}],"inner_thought":';
+    const r = parseDecisionAction(truncated, ctx);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.action.pledges).toEqual([{ to: "A2", amount: 1 }]);
+  });
+
+  it("salvages when truncation lands inside an array element string", () => {
+    const truncated =
+      '{"requests":[{"target":"A2","message":"please give me 2 points back this round because';
+    const r = parseDecisionAction(truncated, ctx);
+    // requests array can't be salvaged cleanly here (the open string belongs to
+    // an incomplete element); but the parser should not crash, and either
+    // succeeds with empty arrays or fails gracefully.
+    if (r.ok) {
+      expect(Array.isArray(r.action.requests)).toBe(true);
+    } else {
+      expect(typeof r.error).toBe("string");
+    }
+  });
+});
+
 // ───── Response phase parser ─────
 
 describe("parseResponseAction — valid", () => {
@@ -233,29 +273,3 @@ describe("parseResponseAction — valid", () => {
   });
 });
 
-// ───── Legacy parser ─────
-
-describe("parseAgentResponse (legacy)", () => {
-  it("noop", () => {
-    const r = parseAgentResponse('{"action":"noop"}');
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.action).toEqual({ action: "noop" });
-  });
-
-  it("request", () => {
-    const r = parseAgentResponse(
-      '{"action":"request","target":"A2","message":"x"}',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it("respond with reason", () => {
-    const r = parseAgentResponse(
-      '{"action":"respond","allocations":[{"to":"A2","amount":3,"reason":"r"}]}',
-    );
-    expect(r.ok).toBe(true);
-    if (r.ok && r.action.action === "respond") {
-      expect(r.action.allocations[0]).toEqual({ to: "A2", amount: 3, reason: "r" });
-    }
-  });
-});

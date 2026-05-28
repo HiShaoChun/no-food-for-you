@@ -1,5 +1,4 @@
 import type {
-  AgentAction,
   DecisionAction,
   PledgeRequest,
   ResponseAction,
@@ -48,7 +47,7 @@ function stripCodeFence(raw: string): string {
 function extractFirstJsonObject(text: string): string | null {
   const start = text.indexOf("{");
   if (start === -1) return null;
-  let depth = 0;
+  const stack: ("{" | "[")[] = [];
   let inStr = false;
   let esc = false;
   for (let i = start; i < text.length; i++) {
@@ -63,13 +62,77 @@ function extractFirstJsonObject(text: string): string | null {
       continue;
     }
     if (ch === '"') inStr = true;
-    else if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) return text.slice(start, i + 1);
+    else if (ch === "{") stack.push("{");
+    else if (ch === "[") stack.push("[");
+    else if (ch === "}" || ch === "]") {
+      stack.pop();
+      if (stack.length === 0 && ch === "}") return text.slice(start, i + 1);
     }
   }
-  return null;
+  // Truncated mid-output (e.g. max_tokens hit while writing a long string field).
+  // Try to salvage: close the open string and remaining brackets so valid earlier
+  // fields still parse through.
+  return repairTruncatedJson(text.slice(start), stack, inStr);
+}
+
+function repairTruncatedJson(
+  body: string,
+  stack: readonly ("{" | "[")[],
+  inStr: boolean,
+): string | null {
+  if (stack.length === 0) return null;
+  let repaired = inStr ? body + '"' : body;
+  // Drop dangling tokens that would make closing invalid:
+  //   trailing `,`              → `,}` is invalid
+  //   trailing `"key":` or `:`  → `:}` is invalid (no value yet)
+  let end = repaired.length;
+  while (end > 0) {
+    const ch = repaired[end - 1]!;
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === ",") {
+      end--;
+      continue;
+    }
+    if (ch === ":") {
+      end--; // drop :
+      while (end > 0) {
+        const c = repaired[end - 1]!;
+        if (c === " " || c === "\t" || c === "\n" || c === "\r") end--;
+        else break;
+      }
+      // drop preceding key string "..."
+      if (end > 0 && repaired[end - 1] === '"') {
+        end--; // consume closing "
+        while (end > 0) {
+          if (repaired[end - 1] === '"') {
+            // ensure it's not an escaped quote
+            let backslashes = 0;
+            let k = end - 2;
+            while (k >= 0 && repaired[k] === "\\") {
+              backslashes++;
+              k--;
+            }
+            if (backslashes % 2 === 0) {
+              end--; // consume opening "
+              break;
+            }
+          }
+          end--;
+        }
+      }
+      continue;
+    }
+    break;
+  }
+  repaired = repaired.slice(0, end);
+  for (let i = stack.length - 1; i >= 0; i--) {
+    repaired += stack[i] === "{" ? "}" : "]";
+  }
+  try {
+    JSON.parse(repaired);
+    return repaired;
+  } catch {
+    return null;
+  }
 }
 
 function asString(v: unknown): string | null {
@@ -191,55 +254,3 @@ export function parseResponseAction(rawText: string, ctx: ParseContext): Respons
   return plTruncated ? { ok: true, action, policy_truncated: true } : { ok: true, action };
 }
 
-// ───── Legacy parser ─────
-// Used ONLY by the UI when replaying old JSONL files that contain the
-// pre-pledge `agent_decision` events with the single-action shape. The engine
-// no longer calls this.
-
-export type LegacyParseResult =
-  | { ok: true; action: AgentAction }
-  | { ok: false; error: string };
-
-/** @deprecated Use parseDecisionAction / parseResponseAction. Kept for legacy JSONL parsing. */
-export function parseAgentResponse(raw: string): LegacyParseResult {
-  const j = extractJsonObject(raw);
-  if (!j.ok) return { ok: false, error: j.error };
-  if (typeof j.obj !== "object" || j.obj === null) {
-    return { ok: false, error: "not_an_object" };
-  }
-  const o = j.obj as Record<string, unknown>;
-  const action = o.action;
-  if (action === "noop") return { ok: true, action: { action: "noop" } };
-  if (action === "request") {
-    const target = asString(o.target);
-    const message = asString(o.message);
-    if (target === null || target.length === 0) {
-      return { ok: false, error: "request_missing_target" };
-    }
-    if (message === null) {
-      return { ok: false, error: "request_missing_message" };
-    }
-    return { ok: true, action: { action: "request", target, message } };
-  }
-  if (action === "respond") {
-    if (!Array.isArray(o.allocations)) {
-      return { ok: false, error: "respond_allocations_not_array" };
-    }
-    const allocs: { to: string; amount: number; reason?: string }[] = [];
-    for (const a of o.allocations) {
-      if (typeof a !== "object" || a === null) continue;
-      const ar = a as Record<string, unknown>;
-      if (typeof ar.to !== "string" || typeof ar.amount !== "number") continue;
-      if (!Number.isInteger(ar.amount) || ar.amount <= 0) continue;
-      const reason =
-        typeof ar.reason === "string" && ar.reason.trim().length > 0 ? ar.reason : undefined;
-      allocs.push({
-        to: ar.to,
-        amount: ar.amount,
-        ...(reason !== undefined ? { reason } : {}),
-      });
-    }
-    return { ok: true, action: { action: "respond", allocations: allocs } };
-  }
-  return { ok: false, error: `unknown_action: ${String(action)}` };
-}

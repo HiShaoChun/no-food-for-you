@@ -17,6 +17,7 @@ type SeriesPoint = { round: number } & Record<string, number | null>;
 type Props = {
   agents: AgentInstance[];
   series: SeriesPoint[];
+  hoveredAgentId?: string | null;
 };
 
 const COLORS = [
@@ -86,7 +87,7 @@ function ChartTooltip({
   );
 }
 
-export function EnergyChart({ agents, series }: Props): React.ReactElement {
+export function EnergyChart({ agents, series, hoveredAgentId }: Props): React.ReactElement {
   if (series.length === 0) {
     return (
       <div className="empty">
@@ -124,22 +125,26 @@ export function EnergyChart({ agents, series }: Props): React.ReactElement {
           iconType="circle"
           iconSize={8}
         />
-        {agents.map((a, i) => (
-          <Line
-            key={a.id}
-            type="monotone"
-            dataKey={a.id}
-            stroke={COLORS[i % COLORS.length]}
-            strokeWidth={2.25}
-            strokeOpacity={0.95}
-            dot={{ r: 2.5, strokeWidth: 0, fill: COLORS[i % COLORS.length] }}
-            activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--bg)" }}
-            name={a.display_name}
-            connectNulls={false}
-            isAnimationActive={true}
-            animationDuration={200}
-          />
-        ))}
+        {agents.map((a, i) => {
+          const isHovered = hoveredAgentId === a.id;
+          const isDimmed = hoveredAgentId !== null && hoveredAgentId !== undefined && !isHovered;
+          return (
+            <Line
+              key={a.id}
+              type="monotone"
+              dataKey={a.id}
+              stroke={COLORS[i % COLORS.length]}
+              strokeWidth={isHovered ? 4 : 2.25}
+              strokeOpacity={isDimmed ? 0.45 : 0.95}
+              dot={{ r: 2.5, strokeWidth: 0, fill: COLORS[i % COLORS.length] }}
+              activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--bg)" }}
+              name={a.display_name}
+              connectNulls={false}
+              isAnimationActive={true}
+              animationDuration={200}
+            />
+          );
+        })}
       </LineChart>
     </ResponsiveContainer>
   );

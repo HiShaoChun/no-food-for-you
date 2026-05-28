@@ -49,6 +49,7 @@ export default function Page(): React.ReactElement {
   const [events, setEvents] = useState<SimEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [simId, setSimId] = useState<string | null>(null);
+  const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
   const seenKeys = useRef<Set<string>>(new Set());
 
   // Load availability + reset default config once
@@ -149,8 +150,14 @@ export default function Page(): React.ReactElement {
           running={running}
           onChange={setConfig}
           onStart={() => void startSim()}
+          hoveredAgentId={hoveredAgentId}
         />
-        <Arena config={config} events={events} />
+        <Arena
+          config={config}
+          events={events}
+          hoveredAgentId={hoveredAgentId}
+          onHoverAgentChange={setHoveredAgentId}
+        />
       </div>
     </>
   );
@@ -158,7 +165,8 @@ export default function Page(): React.ReactElement {
 
 function dedupeKey(e: SimEvent): string {
   switch (e.type) {
-    case "agent_decision":
+    case "agent_decision_started":
+    case "agent_response_started":
     case "agent_decision_phase":
     case "agent_response_phase":
       return `${e.type}:${e.round}:${e.agent}`;

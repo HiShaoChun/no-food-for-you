@@ -62,27 +62,34 @@ export function DefectionLedger({ agents, events }: Props): React.ReactElement {
         <ul className="side-panel-list">
           {entries.map((d, i) => (
             <li key={i} className="defection-row">
-              <span className="round-tag">R{d.round}</span>
-              <span
-                className="transfer-dot"
-                style={{ background: agentColor(agents, d.from) }}
-                aria-hidden
-              />
-              <span>{nameOf(agents, d.from)}</span>
-              <span className="arrow">→</span>
-              <span
-                className="transfer-dot"
-                style={{ background: agentColor(agents, d.to) }}
-                aria-hidden
-              />
-              <span>{nameOf(agents, d.to)}</span>
-              <span className="defection-counts">
-                {d.actual}/{d.pledged}
-              </span>
-              <span className={`defection-bonus ${d.bonus_paid >= 0 ? "pos" : "neg"}`}>
-                {d.bonus_paid >= 0 ? "+" : ""}
-                {d.bonus_paid}
-              </span>
+              <div className="defection-row-meta">
+                <span className="round-tag">R{d.round} 背叛</span>
+                <span className="defection-counts">
+                  承诺 <strong>{d.pledged}</strong> · 实给 <strong>{d.actual}</strong>
+                </span>
+                <span className={`defection-bonus ${d.bonus_paid >= 0 ? "pos" : "neg"}`}>
+                  背叛者 {d.bonus_paid >= 0 ? "+" : ""}
+                  {d.bonus_paid}
+                </span>
+              </div>
+              <div className="party-line">
+                <span className="party-label">背叛方</span>
+                <span
+                  className="transfer-dot"
+                  style={{ background: agentColor(agents, d.from) }}
+                  aria-hidden
+                />
+                <span className="party-name">{nameOf(agents, d.from)}</span>
+              </div>
+              <div className="party-line">
+                <span className="party-label">受害方</span>
+                <span
+                  className="transfer-dot"
+                  style={{ background: agentColor(agents, d.to) }}
+                  aria-hidden
+                />
+                <span className="party-name">{nameOf(agents, d.to)}</span>
+              </div>
             </li>
           ))}
         </ul>
